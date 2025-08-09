@@ -197,8 +197,9 @@ class NeppanCSVParser:
     def _convert_numbers(self):
         """数値カラムの変換"""
         number_columns = {
-            "大人数": "num_adults",
-            "子供数": "num_children",
+            "大人人数計": "num_adults",
+            "子供人数計": "num_children",
+            "幼児人数計": "num_infants",
             "合計金額": "total_amount",
             "手数料": "commission",
             "純売上": "net_amount"
@@ -242,7 +243,7 @@ class NeppanCSVParser:
             "ota_name", "ota_type", "facility_name", "room_type",
             "check_in_date", "check_out_date", "reservation_date",
             "guest_name", "guest_name_kana", "guest_phone", "guest_email",
-            "num_adults", "num_children",
+            "num_adults", "num_children", "num_infants",
             "total_amount", "commission", "net_amount",
             "questions_answers", "change_history", "notes_other"
         ]
