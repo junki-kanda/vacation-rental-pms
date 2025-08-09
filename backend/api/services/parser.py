@@ -24,10 +24,10 @@ class NeppanCSVParser:
         "Agoda": "agoda"
     }
     
-    # 必須カラム
+    # 必須カラム（宿泊者氏名など）
     REQUIRED_COLUMNS = [
         "予約ID", "予約区分", "チェックイン日", "チェックアウト日",
-        "予約サイト名称", "部屋タイプ名称", "宿泊者名"
+        "予約サイト名称", "部屋タイプ名称", "宿泊者氏名"
     ]
     
     def __init__(self, file_path: str, encoding: str = "shift_jis"):
@@ -227,7 +227,7 @@ class NeppanCSVParser:
             "予約番号": "reservation_number",
             "予約サイト名称": "ota_name",
             "部屋タイプ名称": "room_type",
-            "宿泊者名": "guest_name",
+            "宿泊者氏名": "guest_name",
             "宿泊者名カナ": "guest_name_kana",
             "電話番号": "guest_phone",
             "メールアドレス": "guest_email"
