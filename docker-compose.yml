@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15
+    container_name: vacation-rental-pms-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: vacation_rental_pms
+      POSTGRES_USER: pmsuser
+      POSTGRES_PASSWORD: pmspassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - pms-network
+
+  # Redis for background tasks
+  redis:
+    image: redis:7-alpine
+    container_name: vacation-rental-pms-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - pms-network
+
+  # Backend API
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vacation-rental-pms-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://pmsuser:pmspassword@db:5432/vacation_rental_pms
+      - REDIS_URL=redis://redis:6379
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:3001
+      - CSV_DIR=/app/data/csv
+      - UPLOAD_DIR=/app/data/uploads
+    volumes:
+      - ./backend/data:/app/data
+      - ./backend/.env:/app/.env:ro
+    depends_on:
+      - db
+      - redis
+    networks:
+      - pms-network
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: vacation-rental-pms-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - pms-network
+
+  # Background worker for CSV processing
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vacation-rental-pms-worker
+    restart: unless-stopped
+    command: celery -A app.celery worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://pmsuser:pmspassword@db:5432/vacation_rental_pms
+      - REDIS_URL=redis://redis:6379
+      - CSV_DIR=/app/data/csv
+      - UPLOAD_DIR=/app/data/uploads
+    volumes:
+      - ./backend/data:/app/data
+      - ./backend/.env:/app/.env:ro
+    depends_on:
+      - db
+      - redis
+    networks:
+      - pms-network
+
+  # Scheduler for periodic tasks
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vacation-rental-pms-scheduler
+    restart: unless-stopped
+    command: celery -A app.celery beat --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://pmsuser:pmspassword@db:5432/vacation_rental_pms
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./backend/.env:/app/.env:ro
+    depends_on:
+      - db
+      - redis
+    networks:
+      - pms-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  pms-network:
+    driver: bridge

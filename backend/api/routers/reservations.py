@@ -1,0 +1,123 @@
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from typing import List, Optional, Annotated
+from datetime import date
+
+from ..database import get_db
+from ..schemas import Reservation, ReservationCreate, ReservationUpdate
+from ..crud import (
+    get_reservations, get_reservation, create_reservation, 
+    update_reservation, get_or_create_facility
+)
+
+router = APIRouter(prefix="/api/reservations", tags=["reservations"])
+
+@router.get("", response_model=List[Reservation])
+def list_reservations(
+    skip: int = 0,
+    limit: int = 100,
+    ota_name: Annotated[Optional[List[str]], Query()] = None,
+    facility_id: Annotated[Optional[str], Query()] = None,  # 文字列として受け取る（後方互換性のため残す）
+    room_type: Annotated[Optional[str], Query()] = None,  # 部屋タイプフィルター追加
+    check_in_date_from: Annotated[Optional[str], Query()] = None,  # 文字列として受け取る
+    check_in_date_to: Annotated[Optional[str], Query()] = None,  # 文字列として受け取る
+    guest_name: Annotated[Optional[str], Query()] = None,
+    sort_by: Annotated[Optional[str], Query()] = None,  # ソートキー
+    sort_order: Annotated[Optional[str], Query()] = None,  # ソート順序
+    db: Session = Depends(get_db)
+):
+    """予約一覧を取得"""
+    # 空文字列をNoneに変換
+    if ota_name and all(name == "" for name in ota_name):
+        ota_name = None
+    if guest_name == "":
+        guest_name = None
+    if room_type == "":
+        room_type = None
+    
+    # facility_idを整数に変換
+    facility_id_int = None
+    if facility_id and facility_id != "":
+        try:
+            facility_id_int = int(facility_id)
+        except ValueError:
+            facility_id_int = None
+    
+    # 日付文字列をdateオブジェクトに変換
+    date_from = None
+    date_to = None
+    if check_in_date_from and check_in_date_from != "":
+        try:
+            date_from = date.fromisoformat(check_in_date_from)
+        except ValueError:
+            date_from = None
+    if check_in_date_to and check_in_date_to != "":
+        try:
+            date_to = date.fromisoformat(check_in_date_to)
+        except ValueError:
+            date_to = None
+        
+    reservations = get_reservations(
+        db, skip=skip, limit=limit,
+        ota_name=ota_name,
+        facility_id=facility_id_int,
+        room_type=room_type,
+        check_in_date_from=date_from,
+        check_in_date_to=date_to,
+        guest_name=guest_name,
+        sort_by=sort_by,
+        sort_order=sort_order
+    )
+    return reservations
+
+@router.get("/{reservation_id}", response_model=Reservation)
+def get_reservation_detail(reservation_id: int, db: Session = Depends(get_db)):
+    """予約詳細を取得"""
+    reservation = get_reservation(db, reservation_id)
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    return reservation
+
+@router.post("", response_model=Reservation)
+def create_new_reservation(
+    reservation: ReservationCreate,
+    db: Session = Depends(get_db)
+):
+    """予約を作成"""
+    # 施設の取得または作成
+    facility = get_or_create_facility(
+        db,
+        name=reservation.room_type.split(" - ")[0] if " - " in reservation.room_type else reservation.room_type,
+        room_type_identifier=reservation.room_type
+    )
+    
+    return create_reservation(db, reservation, facility_id=facility.id)
+
+@router.put("/{reservation_id}", response_model=Reservation)
+def update_existing_reservation(
+    reservation_id: str,
+    reservation: ReservationUpdate,
+    db: Session = Depends(get_db)
+):
+    """予約を更新"""
+    updated = update_reservation(db, reservation_id, reservation)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    return updated
+
+@router.delete("/{reservation_id}")
+def delete_reservation(
+    reservation_id: int,
+    db: Session = Depends(get_db)
+):
+    """予約を削除"""
+    from ..models import Reservation as ReservationModel
+    
+    reservation = db.query(ReservationModel).filter(ReservationModel.id == reservation_id).first()
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    
+    db.delete(reservation)
+    db.commit()
+    
+    return {"message": "Reservation deleted successfully"}

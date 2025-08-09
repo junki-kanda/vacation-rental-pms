@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* React Big Calendar カスタムスタイル */
+.rbc-calendar {
+  font-family: inherit;
+}
+
+.rbc-header {
+  padding: 10px 0;
+  font-weight: 600;
+  font-size: 0.875rem;
+  background: #f9fafb;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.rbc-today {
+  background-color: #eff6ff;
+}
+
+.rbc-event {
+  padding: 0;
+  background-color: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.rbc-event-content {
+  height: 100%;
+}
+
+.rbc-event:hover {
+  opacity: 0.9;
+}
+
+.rbc-event.rbc-selected {
+  outline: 2px solid #1d4ed8;
+  outline-offset: 1px;
+  z-index: 10;
+}
+
+.rbc-day-slot .rbc-event {
+  border: none;
+}
+
+.rbc-slot-selection {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+.rbc-show-more {
+  background-color: transparent;
+  color: #3b82f6;
+  font-weight: 500;
+}
+
+/* イベントの連続表示をサポート */
+.rbc-event-continues-prior {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.rbc-event-continues-after {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.rbc-event-continues-day-prior {
+  border-left-width: 0;
+}
+
+.rbc-event-continues-day-after {
+  border-right-width: 0;
+}
+
+/* 月表示でのイベント間隔調整 */
+.rbc-month-view .rbc-event {
+  margin: 1px 1px;
+}
+
+/* 週・日表示でのイベント表示改善 */
+.rbc-time-view .rbc-event {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.rbc-agenda-view .rbc-event {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin: 2px 0;
+}

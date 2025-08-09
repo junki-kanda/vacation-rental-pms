@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Test</title>
+</head>
+<body>
+    <h1>API Connection Test</h1>
+    <div id="status">Checking...</div>
+    <div id="files"></div>
+    <button onclick="processCSV()">Process First CSV</button>
+    <div id="result"></div>
+
+    <script>
+        let firstFile = null;
+
+        async function checkAPI() {
+            try {
+                const response = await fetch('http://localhost:8000/');
+                const data = await response.json();
+                document.getElementById('status').innerHTML = `API Status: Connected - ${data.message}`;
+                
+                // Get CSV files
+                const csvResponse = await fetch('http://localhost:8000/api/sync/list-csv');
+                const csvData = await csvResponse.json();
+                
+                if (csvData.files && csvData.files.length > 0) {
+                    firstFile = csvData.files[0].filename;
+                    document.getElementById('files').innerHTML = `<h2>CSV Files:</h2><ul>${csvData.files.map(f => `<li>${f.filename}</li>`).join('')}</ul>`;
+                } else {
+                    document.getElementById('files').innerHTML = '<p>No CSV files found</p>';
+                }
+            } catch (error) {
+                document.getElementById('status').innerHTML = `API Status: Error - ${error.message}`;
+            }
+        }
+
+        async function processCSV() {
+            if (!firstFile) {
+                alert('No CSV file available');
+                return;
+            }
+
+            try {
+                const response = await fetch('http://localhost:8000/api/sync/process-local', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ filename: firstFile })
+                });
+                const data = await response.json();
+                document.getElementById('result').innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+            } catch (error) {
+                document.getElementById('result').innerHTML = `Error: ${error.message}`;
+            }
+        }
+
+        checkAPI();
+    </script>
+</body>
+</html>
