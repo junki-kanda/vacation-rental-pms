@@ -1,80 +1,52 @@
-"""APIのテストスクリプト"""
+"""API endpoint tests using FastAPI TestClient."""
 
-import requests
-import json
+from pathlib import Path
 
-API_URL = "http://localhost:8000"
+import pytest
+from fastapi.testclient import TestClient
 
-def test_list_csv():
+from api.main import app
+
+client = TestClient(app)
+
+
+@pytest.fixture(scope="module")
+def sample_csv():
+    """Create a temporary CSV file for testing."""
+    csv_dir = Path("./data/csv")
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    file = csv_dir / "sample.csv"
+    file.write_text("id,name\n1,Alice\n")
+    yield file.name
+    if file.exists():
+        file.unlink()
+
+
+def test_list_csv_files(sample_csv):
     """CSVファイル一覧の取得をテスト"""
-    print("1. Testing CSV list endpoint...")
-    response = requests.get(f"{API_URL}/api/sync/list-csv")
-    print(f"   Status: {response.status_code}")
-    if response.status_code == 200:
-        data = response.json()
-        print(f"   Files found: {len(data.get('files', []))}")
-        for file in data.get('files', []):
-            print(f"   - {file['filename']} ({file['size']} bytes)")
-        return data.get('files', [])
-    else:
-        print(f"   Error: {response.text}")
-        return []
+    response = client.get("/api/sync/list-csv")
+    assert response.status_code == 200
+    data = response.json()
+    assert any(f["filename"] == sample_csv for f in data["files"])
 
-def test_process_csv(filename):
+
+def test_process_local(sample_csv):
     """CSVファイルの処理をテスト"""
-    print(f"\n2. Testing process-local endpoint with {filename}...")
-    
-    headers = {'Content-Type': 'application/json'}
-    payload = {"filename": filename}
-    
-    print(f"   Payload: {json.dumps(payload)}")
-    response = requests.post(
-        f"{API_URL}/api/sync/process-local",
-        json=payload,
-        headers=headers
-    )
-    
-    print(f"   Status: {response.status_code}")
-    if response.status_code == 200:
-        data = response.json()
-        print(f"   Response: {json.dumps(data, indent=2)}")
-        return data.get('sync_id')
-    else:
-        print(f"   Error: {response.text}")
-        return None
+    response = client.post("/api/sync/process-local", json={"filename": sample_csv})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["filename"] == sample_csv
+    assert isinstance(data["sync_id"], int)
 
-def test_sync_status(sync_id):
+
+def test_sync_status(sample_csv):
     """同期ステータスの確認"""
-    print(f"\n3. Testing sync status for ID {sync_id}...")
-    response = requests.get(f"{API_URL}/api/sync/status/{sync_id}")
-    print(f"   Status: {response.status_code}")
-    if response.status_code == 200:
-        data = response.json()
-        print(f"   Sync Status: {data.get('status')}")
-        print(f"   Total Rows: {data.get('total_rows')}")
-        print(f"   Processed: {data.get('processed_rows')}")
-    else:
-        print(f"   Error: {response.text}")
+    process_resp = client.post("/api/sync/process-local", json={"filename": sample_csv})
+    sync_id = process_resp.json()["sync_id"]
 
-if __name__ == "__main__":
-    print("=" * 50)
-    print("Testing Vacation Rental PMS API")
-    print("=" * 50)
-    
-    # CSVファイル一覧を取得
-    files = test_list_csv()
-    
-    # ファイルがあれば最初のファイルを処理
-    if files:
-        first_file = files[0]['filename']
-        sync_id = test_process_csv(first_file)
-        
-        if sync_id:
-            import time
-            time.sleep(2)  # 処理待ち
-            test_sync_status(sync_id)
-    else:
-        print("\nNo CSV files found. Please run the crawler first.")
-    
-    print("\n" + "=" * 50)
-    print("Test completed")
+    response = client.get(f"/api/sync/status/{sync_id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == sync_id
+    assert data["file_name"] == sample_csv
+
