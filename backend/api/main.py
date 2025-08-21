@@ -1,12 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pathlib import Path
 import logging
 import os
+import json
 
 from .database import engine
 from .models import Base
-from .routers import reservations_router, properties_router, sync_router, dashboard_router, cleaning_router
+from .routers import reservations_router, properties_router, sync_router, dashboard_router, cleaning_router, staff_groups_router
 
 # ロギング設定
 logging.basicConfig(level=logging.INFO)
@@ -19,7 +21,8 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="Vacation Rental PMS",
     description="一棟貸の貸別荘に特化したPMSシステム",
-    version="1.0.0"
+    version="1.0.0",
+    default_response_class=JSONResponse
 )
 
 # CORS設定
@@ -43,6 +46,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# UTF-8エンコーディングミドルウェア
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+import json as json_module
+
+class UTF8Middleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        # JSONレスポンスの場合はcharset=utf-8を追加
+        if response.headers.get("content-type", "").startswith("application/json"):
+            response.headers["content-type"] = "application/json; charset=utf-8"
+        
+        return response
+
+app.add_middleware(UTF8Middleware)
+
 # ディレクトリの作成
 CSV_DIR = os.getenv("CSV_DIR", "./backend/data/csv")
 Path(CSV_DIR).mkdir(parents=True, exist_ok=True)
@@ -53,6 +74,7 @@ app.include_router(properties_router)
 app.include_router(sync_router)
 app.include_router(dashboard_router)
 app.include_router(cleaning_router)
+app.include_router(staff_groups_router)
 
 # ルートエンドポイント
 @app.get("/")

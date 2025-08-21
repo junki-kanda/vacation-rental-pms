@@ -162,7 +162,17 @@ def get_cleaning_tasks(
 
 def create_cleaning_task(db: Session, task: CleaningTaskCreate) -> CleaningTaskModel:
     """清掃タスク作成"""
-    db_task = CleaningTaskModel(**task.dict())
+    task_data = task.dict()
+    
+    # デフォルト時間の設定
+    if not task_data.get('scheduled_start_time'):
+        task_data['scheduled_start_time'] = time(11, 0)  # デフォルト11:00
+    if not task_data.get('scheduled_end_time'):
+        task_data['scheduled_end_time'] = time(16, 0)  # デフォルト16:00
+    if not task_data.get('estimated_duration_minutes'):
+        task_data['estimated_duration_minutes'] = 300  # デフォルト5時間
+    
+    db_task = CleaningTaskModel(**task_data)
     db_task.status = TaskStatus.UNASSIGNED
     db.add(db_task)
     db.commit()
@@ -257,7 +267,7 @@ def auto_create_cleaning_tasks(db: Session, checkout_date: date) -> List[Cleanin
             ).first()
             
             # デフォルト値
-            duration = 120
+            duration = 300  # デフォルト5時間
             if settings:
                 duration = settings.standard_duration_minutes
             
@@ -269,7 +279,7 @@ def auto_create_cleaning_tasks(db: Session, checkout_date: date) -> List[Cleanin
                 checkout_time=time(10, 0),  # デフォルト10:00
                 scheduled_date=checkout_date,
                 scheduled_start_time=time(11, 0),  # デフォルト11:00開始
-                scheduled_end_time=time(13, 0),  # デフォルト13:00終了
+                scheduled_end_time=time(16, 0),  # デフォルト16:00終了
                 estimated_duration_minutes=duration,
                 priority=3,
                 status=TaskStatus.UNASSIGNED

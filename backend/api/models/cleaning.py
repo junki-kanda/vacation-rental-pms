@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Float, Text, Date, Boolean, ForeignKey, Time, JSON, Enum as SQLEnum
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, date
 import enum
 from ..database import Base
 
@@ -12,6 +12,7 @@ class TaskStatus(enum.Enum):
     COMPLETED = "completed"    # 完了
     VERIFIED = "verified"      # 検証済
     CANCELLED = "cancelled"    # キャンセル
+    NEEDS_REVISION = "needs_revision"  # 要修正
 
 class ShiftStatus(enum.Enum):
     """シフトのステータス"""
@@ -20,6 +21,63 @@ class ShiftStatus(enum.Enum):
     IN_PROGRESS = "in_progress"  # 作業中
     COMPLETED = "completed"    # 完了
     CANCELLED = "cancelled"    # キャンセル
+
+class StaffGroup(Base):
+    """清掃スタッフグループマスタテーブル"""
+    __tablename__ = "cleaning_staff_groups"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False, unique=True)
+    description = Column(Text)
+    
+    # グループの能力・特性
+    can_handle_large_properties = Column(Boolean, default=True)  # 大型物件対応可能
+    can_handle_multiple_properties = Column(Boolean, default=True)  # 複数物件同時対応可能
+    max_properties_per_day = Column(Integer, default=1)  # 1日の最大物件数
+    
+    # 対応可能施設（JSON配列でfacility_idのリストを保存）
+    available_facilities = Column(JSON, default=list)
+    
+    # 報酬設定（グループ全体への支払い）
+    rate_per_property = Column(Float, default=8000)  # 1棟あたりの基本報酬
+    rate_per_property_with_option = Column(Float, default=9000)  # オプション付き1棟あたりの報酬
+    transportation_fee = Column(Float, default=0)  # 交通費（グループ全体）
+    
+    # ステータス
+    is_active = Column(Boolean, default=True)
+    
+    # メタデータ
+    notes = Column(Text)  # 備考
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # リレーション
+    members = relationship("StaffGroupMember", back_populates="group", cascade="all, delete-orphan")
+    shifts = relationship("CleaningShift", back_populates="group")
+
+class StaffGroupMember(Base):
+    """スタッフグループメンバーテーブル"""
+    __tablename__ = "cleaning_staff_group_members"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    group_id = Column(Integer, ForeignKey("cleaning_staff_groups.id"), nullable=False)
+    staff_id = Column(Integer, ForeignKey("cleaning_staff.id"), nullable=False)
+    
+    # メンバーの役割
+    role = Column(String(50))  # リーダー、サブリーダー、メンバー等
+    is_leader = Column(Boolean, default=False)
+    
+    # 加入日・脱退日
+    joined_date = Column(Date, default=date.today)
+    left_date = Column(Date)  # NULL = アクティブメンバー
+    
+    # メタデータ
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # リレーション
+    group = relationship("StaffGroup", back_populates="members")
+    staff = relationship("Staff", back_populates="group_memberships")
 
 class Staff(Base):
     """清掃スタッフマスタテーブル"""
@@ -59,6 +117,7 @@ class Staff(Base):
     # リレーション
     shifts = relationship("CleaningShift", back_populates="staff", overlaps="tasks,assigned_staff")
     tasks = relationship("CleaningTask", secondary="cleaning_shifts", back_populates="assigned_staff", overlaps="shifts")
+    group_memberships = relationship("StaffGroupMember", back_populates="staff")
 
 class CleaningTask(Base):
     """清掃タスクテーブル"""
@@ -76,7 +135,7 @@ class CleaningTask(Base):
     scheduled_end_time = Column(Time)  # 清掃終了予定時刻
     
     # 必要時間と優先度
-    estimated_duration_minutes = Column(Integer, default=120)  # 推定所要時間（分）
+    estimated_duration_minutes = Column(Integer, default=300)  # 推定所要時間（分）デフォルト5時間
     priority = Column(Integer, default=3)  # 1-5の優先度（1が最高）
     
     # ステータス
@@ -110,11 +169,12 @@ class CleaningTask(Base):
     verifier = relationship("Staff", foreign_keys=[verified_by])
 
 class CleaningShift(Base):
-    """シフト（スタッフとタスクの割当）テーブル"""
+    """シフト（グループ/スタッフとタスクの割当）テーブル"""
     __tablename__ = "cleaning_shifts"
     
     id = Column(Integer, primary_key=True, index=True)
-    staff_id = Column(Integer, ForeignKey("cleaning_staff.id"), nullable=False)
+    staff_id = Column(Integer, ForeignKey("cleaning_staff.id"), nullable=True)  # 個人割当の場合
+    group_id = Column(Integer, ForeignKey("cleaning_staff_groups.id"), nullable=True)  # グループ割当の場合
     task_id = Column(Integer, ForeignKey("cleaning_tasks.id"), nullable=False)
     
     # 割当情報
@@ -154,6 +214,7 @@ class CleaningShift(Base):
     
     # リレーション
     staff = relationship("Staff", back_populates="shifts", overlaps="assigned_staff,tasks")
+    group = relationship("StaffGroup", back_populates="shifts")
     task = relationship("CleaningTask", back_populates="shifts", overlaps="assigned_staff,tasks")
 
 class FacilityCleaningSettings(Base):
@@ -164,8 +225,8 @@ class FacilityCleaningSettings(Base):
     facility_id = Column(Integer, ForeignKey("facilities.id"), unique=True, nullable=False)
     
     # 清掃時間設定
-    standard_duration_minutes = Column(Integer, default=120)  # 標準清掃時間（分）
-    deep_cleaning_duration_minutes = Column(Integer, default=180)  # 念入り清掃時間（分）
+    standard_duration_minutes = Column(Integer, default=300)  # 標準清掃時間（分）デフォルト5時間
+    deep_cleaning_duration_minutes = Column(Integer, default=360)  # 念入り清掃時間（分）デフォルト6時間
     minimum_interval_hours = Column(Integer, default=2)  # 最小間隔（チェックアウトから清掃開始まで）
     
     # チェックリスト（JSON配列）

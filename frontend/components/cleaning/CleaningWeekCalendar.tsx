@@ -17,6 +17,7 @@ interface CleaningTask {
   status: string;
   guest_name: string | null;
   assigned_staff: Array<{ id: number; name: string; status: string }>;
+  assigned_group?: { id: number; name: string; member_count: number };
   is_assigned: boolean;
 }
 
@@ -80,17 +81,17 @@ export default function CleaningWeekCalendar() {
 
   // タスクステータスによる色分け
   const getTaskColor = (task: CleaningTask) => {
-    if (task.is_assigned) {
-      switch (task.status) {
-        case 'COMPLETED':
-          return 'bg-green-100 border-green-500 text-green-800';
-        case 'IN_PROGRESS':
-          return 'bg-blue-100 border-blue-500 text-blue-800';
-        default:
-          return 'bg-gray-100 border-gray-500 text-gray-800';
-      }
+    switch (task.status) {
+      case 'completed':
+        return 'bg-gray-100 border-gray-500 text-gray-800'; // 完了 - グレー
+      case 'assigned':
+        return 'bg-green-100 border-green-500 text-green-800'; // 割当済み - 緑
+      case 'needs_revision':
+        return 'bg-pink-100 border-pink-500 text-pink-800'; // 要修正 - ピンク
+      case 'unassigned':
+      default:
+        return 'bg-orange-100 border-orange-500 text-orange-800'; // 未割当 - オレンジ
     }
-    return 'bg-orange-100 border-orange-500 text-orange-800';
   };
 
   // 施設ごとのタスクをグループ化
@@ -220,9 +221,11 @@ export default function CleaningWeekCalendar() {
                                   {task.guest_name}
                                 </div>
                               )}
-                              {task.assigned_staff.length > 0 && (
+                              {(task.assigned_staff.length > 0 || task.assigned_group) && (
                                 <div className="truncate text-xs font-medium mt-1">
-                                  {task.assigned_staff.map(s => s.name).join(', ')}
+                                  {task.assigned_group 
+                                    ? `🏢 ${task.assigned_group.name}` 
+                                    : task.assigned_staff.map(s => s.name).join(', ')}
                                 </div>
                               )}
                             </button>
@@ -245,16 +248,16 @@ export default function CleaningWeekCalendar() {
           <span>未割当</span>
         </div>
         <div className="flex items-center">
-          <div className="w-4 h-4 bg-gray-100 border-2 border-gray-500 rounded mr-2" />
+          <div className="w-4 h-4 bg-green-100 border-2 border-green-500 rounded mr-2" />
           <span>割当済</span>
         </div>
         <div className="flex items-center">
-          <div className="w-4 h-4 bg-blue-100 border-2 border-blue-500 rounded mr-2" />
-          <span>作業中</span>
+          <div className="w-4 h-4 bg-gray-100 border-2 border-gray-500 rounded mr-2" />
+          <span>完了</span>
         </div>
         <div className="flex items-center">
-          <div className="w-4 h-4 bg-green-100 border-2 border-green-500 rounded mr-2" />
-          <span>完了</span>
+          <div className="w-4 h-4 bg-pink-100 border-2 border-pink-500 rounded mr-2" />
+          <span>要修正</span>
         </div>
       </div>
 

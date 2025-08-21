@@ -16,7 +16,7 @@ from ..schemas.cleaning import (
     # FacilityCleaningSettings
     FacilityCleaningSettings, FacilityCleaningSettingsCreate, FacilityCleaningSettingsUpdate,
     # Dashboard
-    CleaningDashboardStats, StaffPerformance,
+    CleaningDashboardStats, StaffPerformance, StaffMonthlyStats,
     TaskAutoAssignRequest, TaskAutoAssignResponse,
     # Enums
     TaskStatus, ShiftStatus
@@ -26,6 +26,7 @@ from ..crud import staff_availability as availability_crud
 from ..schemas.staff_availability import (
     StaffAvailability, StaffAvailabilityCreate, StaffAvailabilityUpdate
 )
+from ..services.cleaning_sync import CleaningSyncService
 
 router = APIRouter(prefix="/api/cleaning", tags=["cleaning"])
 
@@ -153,13 +154,26 @@ def get_tasks_for_calendar(
         
         # シフト情報も含める
         assigned_staff = []
+        assigned_group = None
+        is_assigned = False
+        
         for shift in task.shifts:
             if shift.staff:
+                # 個人割当の場合
                 assigned_staff.append({
                     "id": shift.staff.id,
                     "name": shift.staff.name,
                     "status": shift.status.value if hasattr(shift.status, 'value') else shift.status
                 })
+                is_assigned = True
+            elif shift.group:
+                # グループ割当の場合
+                assigned_group = {
+                    "id": shift.group.id,
+                    "name": shift.group.name,
+                    "member_count": len([m for m in shift.group.members if m.left_date is None])
+                }
+                is_assigned = True
         
         tasks_by_date[date_str].append({
             "id": task.id,
@@ -172,7 +186,8 @@ def get_tasks_for_calendar(
             "status": task.status.value if hasattr(task.status, 'value') else task.status,
             "guest_name": task.reservation.guest_name if task.reservation else None,
             "assigned_staff": assigned_staff,
-            "is_assigned": len(assigned_staff) > 0
+            "assigned_group": assigned_group,
+            "is_assigned": is_assigned
         })
     
     return {
@@ -216,6 +231,31 @@ def update_cleaning_task(
     if not updated_task:
         raise HTTPException(status_code=404, detail="Task not found")
     return updated_task
+
+@router.patch("/tasks/{task_id}/status")
+def update_task_status(
+    task_id: int = Path(..., ge=1),
+    status: str = Query(...),
+    db: Session = Depends(get_db)
+):
+    """タスクステータス更新"""
+    from ..models.cleaning import TaskStatus
+    
+    # ステータスの妥当性チェック
+    valid_statuses = [status.value for status in TaskStatus]
+    if status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Valid options: {valid_statuses}")
+    
+    task = crud.get_cleaning_task(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    # ステータス更新
+    from ..schemas.cleaning import CleaningTaskUpdate
+    task_update = CleaningTaskUpdate(status=status)
+    updated_task = crud.update_cleaning_task(db, task_id, task_update)
+    
+    return {"message": f"Task status updated to {status}", "task_id": task_id, "new_status": status}
 
 @router.post("/tasks/auto-create")
 def auto_create_tasks(
@@ -420,6 +460,126 @@ def get_staff_performance(
     performance = crud.get_staff_performance(db, start_date, end_date)
     return [StaffPerformance(**p) for p in performance]
 
+@router.get("/dashboard/staff-monthly-stats", response_model=List[StaffMonthlyStats])
+def get_staff_monthly_stats(
+    year: int = Query(..., ge=2020, le=2030),
+    month: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db)
+):
+    """スタッフ月次統計取得
+    
+    指定月のスタッフごとの出勤日数、担当棟数を集計
+    """
+    from ..models.cleaning import Staff as StaffModel, CleaningShift as ShiftModel, StaffGroupMember, CleaningTask as TaskModel
+    from sqlalchemy import func, and_, extract
+    from datetime import datetime, date
+    import calendar
+    
+    # 月の開始日と終了日を計算
+    _, last_day = calendar.monthrange(year, month)
+    start_date = date(year, month, 1)
+    end_date = date(year, month, last_day)
+    
+    # アクティブなスタッフを取得
+    staff_list = db.query(StaffModel).filter(StaffModel.is_active == True).all()
+    
+    stats = []
+    for staff in staff_list:
+        # 個人割当のシフトを取得
+        individual_shifts = db.query(ShiftModel).filter(
+            and_(
+                ShiftModel.staff_id == staff.id,
+                ShiftModel.assigned_date >= start_date,
+                ShiftModel.assigned_date <= end_date,
+                ShiftModel.status != "cancelled"
+            )
+        ).all()
+        
+        # グループ割当のシフトを取得（スタッフが所属するグループ経由）
+        group_shifts = db.query(ShiftModel).join(
+            StaffGroupMember,
+            and_(
+                ShiftModel.group_id == StaffGroupMember.group_id,
+                StaffGroupMember.staff_id == staff.id,
+                StaffGroupMember.left_date.is_(None)
+            )
+        ).filter(
+            and_(
+                ShiftModel.assigned_date >= start_date,
+                ShiftModel.assigned_date <= end_date,
+                ShiftModel.status != "cancelled"
+            )
+        ).all()
+        
+        # 出勤日を集計
+        dates_worked = set()
+        individual_task_count = 0
+        group_task_count = 0
+        total_hours = 0.0
+        
+        for shift in individual_shifts:
+            dates_worked.add(shift.assigned_date)
+            individual_task_count += 1
+            # タスクから推定時間を取得
+            task = db.query(TaskModel).filter(TaskModel.id == shift.task_id).first()
+            if task:
+                total_hours += (task.estimated_duration_minutes or 300) / 60.0
+        
+        for shift in group_shifts:
+            dates_worked.add(shift.assigned_date)
+            group_task_count += 1
+            # グループタスクの場合は時間を按分
+            task = db.query(TaskModel).filter(TaskModel.id == shift.task_id).first()
+            if task:
+                # グループメンバー数で按分
+                group_member_count = db.query(func.count(StaffGroupMember.id)).filter(
+                    and_(
+                        StaffGroupMember.group_id == shift.group_id,
+                        StaffGroupMember.left_date.is_(None)
+                    )
+                ).scalar() or 1
+                total_hours += ((task.estimated_duration_minutes or 300) / 60.0) / group_member_count
+        
+        stats.append(StaffMonthlyStats(
+            staff_id=staff.id,
+            staff_name=staff.name,
+            year=year,
+            month=month,
+            working_days=len(dates_worked),
+            total_tasks=individual_task_count + group_task_count,
+            individual_tasks=individual_task_count,
+            group_tasks=group_task_count,
+            total_hours=round(total_hours, 1),
+            dates_worked=sorted(list(dates_worked))
+        ))
+    
+    # 出勤日数でソート（降順）
+    stats.sort(key=lambda x: x.working_days, reverse=True)
+    
+    return stats
+
+@router.post("/tasks/sync-all")
+def sync_all_cleaning_tasks(
+    db: Session = Depends(get_db)
+):
+    """全清掃タスクを最新の予約データと同期
+    
+    新規予約の追加、キャンセル検知、変更検知を行い、
+    割当済みタスクへの影響がある場合はアラートを生成する
+    """
+    sync_service = CleaningSyncService(db)
+    result = sync_service.sync_all_tasks()
+    return result
+
+@router.get("/tasks/sync-preview")
+def preview_sync_cleaning_tasks(
+    db: Session = Depends(get_db)
+):
+    """同期のプレビュー（実際の変更は行わない）"""
+    sync_service = CleaningSyncService(db)
+    result = sync_service.get_sync_preview()
+    return result
+
 @router.post("/tasks/auto-assign", response_model=TaskAutoAssignResponse)
 def auto_assign_tasks(
     request: TaskAutoAssignRequest,
@@ -461,8 +621,8 @@ def auto_assign_tasks(
             staff_id=staff.id,
             task_id=task.id,
             assigned_date=request.date,
-            scheduled_start_time=task.scheduled_start_time or "10:00",
-            scheduled_end_time=task.scheduled_end_time or "12:00",
+            scheduled_start_time=task.scheduled_start_time or "11:00",
+            scheduled_end_time=task.scheduled_end_time or "16:00",
             created_by="auto_assign"
         )
         

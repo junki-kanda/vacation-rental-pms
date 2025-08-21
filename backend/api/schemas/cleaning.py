@@ -13,6 +13,7 @@ class TaskStatus(str, Enum):
     COMPLETED = "completed"
     VERIFIED = "verified"
     CANCELLED = "cancelled"
+    NEEDS_REVISION = "needs_revision"
 
 class ShiftStatus(str, Enum):
     """シフトのステータス"""
@@ -120,6 +121,7 @@ class CleaningTask(CleaningTaskBase):
     
     # リレーション情報
     assigned_staff: Optional[List["Staff"]] = []
+    assigned_group: Optional[Dict[str, Any]] = None  # グループ情報
     facility_name: Optional[str] = None
     guest_name: Optional[str] = None
     
@@ -129,7 +131,8 @@ class CleaningTask(CleaningTaskBase):
 # シフト関連のスキーマ
 class CleaningShiftBase(BaseModel):
     """シフト基本情報"""
-    staff_id: int
+    staff_id: Optional[int] = None  # グループ割当の場合はNULL
+    group_id: Optional[int] = None  # グループ割当の場合に使用
     task_id: int
     assigned_date: date
     scheduled_start_time: time
@@ -179,6 +182,7 @@ class CleaningShift(CleaningShiftBase):
     
     # リレーション情報
     staff_name: Optional[str] = None
+    group_name: Optional[str] = None  # グループ名
     facility_name: Optional[str] = None
     
     class Config:
@@ -268,3 +272,16 @@ class TaskAutoAssignResponse(BaseModel):
     failed_count: int
     assignments: List[Dict[str, Any]]
     errors: List[str] = []
+
+class StaffMonthlyStats(BaseModel):
+    """スタッフ月次統計"""
+    staff_id: int
+    staff_name: str
+    year: int
+    month: int
+    working_days: int  # 出勤日数
+    total_tasks: int  # 担当棟数
+    group_tasks: int  # グループでの担当数
+    individual_tasks: int  # 個人での担当数
+    total_hours: float  # 総作業時間
+    dates_worked: List[date]  # 出勤日リスト
