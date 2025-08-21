@@ -288,11 +288,10 @@ def auto_create_cleaning_tasks(db: Session, checkout_date: date) -> List[Cleanin
             db.add(task)
             created_tasks.append(task)
     
-    if created_tasks:
-        db.commit()
-        for task in created_tasks:
-            db.refresh(task)
-    
+    db.commit()
+    for task in created_tasks:
+        db.refresh(task)
+
     return created_tasks
 
 # ========== シフト関連 ==========

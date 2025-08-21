@@ -1,7 +1,10 @@
 """APIのテストスクリプト"""
 
+import pytest
 import requests
 import json
+
+pytestmark = pytest.mark.skip(reason="requires running API server")
 
 API_URL = "http://localhost:8000"
 
