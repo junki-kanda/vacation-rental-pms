@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__serena__list_memories",
+      "mcp__serena__activate_project",
+      "Bash(python -m pytest tests/test_auto_assign_algorithm.py -v)",
+      "Bash(python -m pytest tests/test_auto_assign_algorithm.py::test_auto_assign_basic -v)",
+      "Bash(dir C:UsersjkwrrDocumentsvacation-rental-pmsfrontendlib)",
+      "Bash(mkdir:*)",
+      "Bash(python -m pytest tests/test_group_assign_tasks.py -v)",
+      "Bash(python -m pytest tests/test_group_assign_tasks.py::test_group_assign_single_task -v)",
+      "Bash(python -m pytest tests/test_group_assign_tasks.py -v --tb=short)",
+      "mcp__serena__find_symbol",
+      "mcp__serena__search_for_pattern",
+      "Bash(python -m pytest tests/test_needs_revision_flow.py -v)",
+      "Bash(python -m pytest tests/test_needs_revision_flow.py::test_task_revision_request -v)",
+      "mcp__serena__read_file",
+      "mcp__serena__list_dir",
+      "mcp__serena__replace_regex",
+      "Bash(python -m pytest tests/test_auto_create_cleaning_tasks.py -v)",
+      "Bash(python test:*)",
+      "Bash(rm:*)",
+      "Bash(python -m pytest tests/test_auto_create_error_handling.py -v)",
+      "Bash(python -m pytest tests/test_auto_create_error_handling.py::test_auto_create_with_empty_room_type -v)",
+      "Bash(python -m pytest tests/test_parser_numbers.py -v)",
+      "Bash(python -m pytest tests/test_parser_numbers_comprehensive.py -v)",
+      "Bash(python -m pytest tests/test_parser_numbers_edge_cases.py::test_japanese_full_width_numbers -v)",
+      "Bash(python -m pytest tests/test_parser_numbers_performance.py::test_large_dataset_performance -v)",
+      "Bash(python -m pytest tests/test_parser_numbers_improvements.py::test_improvement_full_width_numbers -v)",
+      "Bash(python -m pytest tests/test_parser_numbers_summary.py::test_parser_number_mapping_coverage_report -v -s)",
+      "Bash(python -m pytest tests/test_parser_numbers_summary.py::test_current_implementation_strengths -v -s)",
+      "Bash(npm run dev:*)",
+      "Bash(npm install)",
+      "Bash(npx next build:*)",
+      "Bash(npx tsc:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

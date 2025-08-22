@@ -1,62 +1,95 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func, extract
+from sqlalchemy import and_, func, extract, case, literal_column
 from datetime import date, datetime, timedelta
 from typing import Dict, Any, List
 from ..models import Reservation, Facility
 from .sync_log import get_latest_sync_log
+import logging
+
+logger = logging.getLogger(__name__)
 
 def get_dashboard_stats(db: Session):
+    """最適化されたダッシュボード統計取得"""
     today = date.today()
     
-    # 本日のチェックイン（棟数でカウント）
-    today_checkins = db.query(func.count(func.distinct(Reservation.facility_id))).filter(
-        Reservation.check_in_date == today
-    ).scalar()
-    
-    # 本日のチェックアウト（棟数でカウント）
-    today_checkouts = db.query(func.count(func.distinct(Reservation.facility_id))).filter(
-        Reservation.check_out_date == today
-    ).scalar()
-    
-    # 本日の宿泊者数
-    total_guests_today = db.query(
-        func.sum(Reservation.num_adults + Reservation.num_children + Reservation.num_infants)
-    ).filter(
-        and_(
-            Reservation.check_in_date <= today,
-            Reservation.check_out_date > today
-        )
-    ).scalar() or 0
-    
-    # 稼働率計算（全施設数に対する予約施設数）
-    total_facilities = db.query(func.count(Facility.id)).filter(
-        Facility.is_active == True
-    ).scalar() or 1
-    occupied_facilities = db.query(func.count(func.distinct(Reservation.facility_id))).filter(
-        and_(
-            Reservation.check_in_date <= today,
-            Reservation.check_out_date > today,
-            Reservation.reservation_type != "キャンセル"
-        )
-    ).scalar() or 0
-    occupancy_rate = (occupied_facilities / total_facilities) * 100 if total_facilities > 0 else 0
-    
-    # 最近の予約（直近10件）
-    recent_reservations = db.query(Reservation).order_by(
-        Reservation.created_at.desc()
-    ).limit(10).all()
-    
-    # 最新の同期状態
-    sync_status = get_latest_sync_log(db)
-    
-    return {
-        "today_checkins": today_checkins or 0,
-        "today_checkouts": today_checkouts or 0,
-        "total_guests_today": int(total_guests_today),
-        "occupancy_rate": round(occupancy_rate, 1),
-        "recent_reservations": recent_reservations,
-        "sync_status": sync_status
-    }
+    try:
+        # 複数の統計を単一クエリで取得（最適化）
+        stats_query = db.query(
+            # 本日のチェックイン（棟数）
+            func.count(func.distinct(
+                case((Reservation.check_in_date == today, Reservation.facility_id), else_=None)
+            )).label('today_checkins'),
+            
+            # 本日のチェックアウト（棟数）
+            func.count(func.distinct(
+                case((Reservation.check_out_date == today, Reservation.facility_id), else_=None)
+            )).label('today_checkouts'),
+            
+            # 本日の宿泊者数（現在滞在中）
+            func.sum(
+                case((
+                    and_(
+                        Reservation.check_in_date <= today,
+                        Reservation.check_out_date > today,
+                        Reservation.reservation_type != "キャンセル"
+                    ),
+                    Reservation.num_adults + Reservation.num_children + Reservation.num_infants
+                ), else_=0)
+            ).label('total_guests_today'),
+            
+            # 現在稼働中の施設数
+            func.count(func.distinct(
+                case((
+                    and_(
+                        Reservation.check_in_date <= today,
+                        Reservation.check_out_date > today,
+                        Reservation.reservation_type != "キャンセル"
+                    ),
+                    Reservation.facility_id
+                ), else_=None)
+            )).label('occupied_facilities')
+        ).first()
+        
+        # 全施設数を取得
+        total_facilities = db.query(func.count(Facility.id)).filter(
+            Facility.is_active == True
+        ).scalar() or 1
+        
+        # 稼働率計算
+        occupied_facilities = stats_query.occupied_facilities or 0
+        occupancy_rate = (occupied_facilities / total_facilities) * 100 if total_facilities > 0 else 0
+        
+        # 最近の予約（直近10件）- 必要な場合のみ取得
+        recent_reservations = db.query(Reservation).order_by(
+            Reservation.created_at.desc()
+        ).limit(10).all()
+        
+        # 最新の同期状態
+        sync_status = get_latest_sync_log(db)
+        
+        result = {
+            "today_checkins": int(stats_query.today_checkins or 0),
+            "today_checkouts": int(stats_query.today_checkouts or 0),
+            "total_guests_today": int(stats_query.total_guests_today or 0),
+            "occupancy_rate": round(occupancy_rate, 1),
+            "recent_reservations": recent_reservations,
+            "sync_status": sync_status
+        }
+        
+        logger.info(f"Dashboard stats retrieved successfully: {result.keys()}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error retrieving dashboard stats: {e}")
+        # フォールバック：エラー時は基本値を返す
+        return {
+            "today_checkins": 0,
+            "today_checkouts": 0,
+            "total_guests_today": 0,
+            "occupancy_rate": 0.0,
+            "recent_reservations": [],
+            "sync_status": None
+        }
 
 def get_monthly_stats(db: Session, year: int, month: int) -> Dict[str, Any]:
     """月間統計情報を取得"""

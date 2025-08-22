@@ -142,6 +142,9 @@ export default function StaffManagementPage() {
                     移動手段
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    対応施設
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     報酬（1棟あたり）
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -195,6 +198,19 @@ export default function StaffManagementPage() {
                         )}
                         {staff.has_car && (
                           <Car className="h-4 w-4 text-gray-600" />
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">
+                        {staff.available_facilities && staff.available_facilities.length > 0 ? (
+                          <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+                            {staff.available_facilities.length}施設
+                          </span>
+                        ) : (
+                          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
+                            全施設対応
+                          </span>
                         )}
                       </div>
                     </td>

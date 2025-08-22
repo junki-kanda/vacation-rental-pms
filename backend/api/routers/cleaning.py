@@ -27,20 +27,39 @@ from ..schemas.staff_availability import (
     StaffAvailability, StaffAvailabilityCreate, StaffAvailabilityUpdate
 )
 from ..services.cleaning_sync import CleaningSyncService
+from ..models.property import Facility
 
-router = APIRouter(prefix="/api/cleaning", tags=["cleaning"])
+router = APIRouter(
+    prefix="/api/cleaning",
+    tags=["清掃管理"],
+    responses={
+        404: {"description": "Not found"},
+        409: {"description": "Conflict"}
+    }
+)
 
 # ========== スタッフ管理 ==========
 
-@router.get("/staff", response_model=List[Staff])
+@router.get(
+    "/staff",
+    response_model=List[Staff],
+    summary="清掃スタッフ一覧の取得",
+    description="登録されている清掃スタッフの一覧を取得します"
+)
 def get_staff_list(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=100),
-    is_active: Optional[bool] = None,
-    facility_id: Optional[int] = None,
+    skip: int = Query(0, ge=0, description="スキップする件数"),
+    limit: int = Query(100, ge=1, le=100, description="取得する最大件数"),
+    is_active: Optional[bool] = Query(None, description="アクティブ状態でフィルター"),
+    facility_id: Optional[int] = Query(None, description="対応可能施設IDでフィルター"),
     db: Session = Depends(get_db)
 ):
-    """スタッフ一覧取得"""
+    """
+    スタッフ一覧取得
+    
+    ### フィルター:
+    - **is_active**: アクティブなスタッフのみ取得
+    - **facility_id**: 特定の施設に対応可能なスタッフのみ取得
+    """
     staff_list = crud.get_staff_list(
         db, skip=skip, limit=limit, 
         is_active=is_active, facility_id=facility_id
@@ -255,7 +274,93 @@ def update_task_status(
     task_update = CleaningTaskUpdate(status=status)
     updated_task = crud.update_cleaning_task(db, task_id, task_update)
     
+    # needs_revision ステータスの場合、特別な処理を実行
+    if status == TaskStatus.NEEDS_REVISION.value:
+        # タスクが割り当て済みの場合、一旦未割当に戻す
+        if task.status == TaskStatus.ASSIGNED.value:
+            from ..crud.cleaning import unassign_task_from_staff
+            unassign_task_from_staff(db, task_id)
+    
     return {"message": f"Task status updated to {status}", "task_id": task_id, "new_status": status}
+
+@router.post("/tasks/{task_id}/revision")
+def request_task_revision(
+    task_id: int = Path(..., ge=1),
+    revision_reason: str = Query(..., min_length=1),
+    db: Session = Depends(get_db)
+):
+    """タスクの修正要求"""
+    task = crud.get_cleaning_task(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    # タスクを要修正状態に変更
+    from ..schemas.cleaning import CleaningTaskUpdate
+    task_update = CleaningTaskUpdate(
+        status=TaskStatus.NEEDS_REVISION.value,
+        special_instructions=f"{task.special_instructions or ''}\n【修正要求】{revision_reason}" if task.special_instructions else f"【修正要求】{revision_reason}"
+    )
+    updated_task = crud.update_cleaning_task(db, task_id, task_update)
+    
+    # 割り当てられたスタッフ/グループがいる場合は解除
+    from ..crud.cleaning import unassign_task_from_staff
+    unassign_task_from_staff(db, task_id)
+    
+    return {
+        "message": "Task marked for revision",
+        "task_id": task_id,
+        "revision_reason": revision_reason
+    }
+
+@router.get("/tasks/needs-revision")
+def get_tasks_needing_revision(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    facility_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    """要修正タスク一覧取得"""
+    query = db.query(CleaningTask).filter(CleaningTask.status == TaskStatus.NEEDS_REVISION)
+    
+    if facility_id:
+        query = query.filter(CleaningTask.facility_id == facility_id)
+    
+    tasks = query.offset(skip).limit(limit).all()
+    
+    # 施設情報を付与
+    for task in tasks:
+        if task.facility:
+            task.facility_name = task.facility.name
+    
+    return tasks
+
+@router.post("/tasks/{task_id}/resolve-revision")
+def resolve_task_revision(
+    task_id: int = Path(..., ge=1),
+    resolution_notes: str = Query(..., min_length=1),
+    db: Session = Depends(get_db)
+):
+    """タスクの修正対応完了"""
+    task = crud.get_cleaning_task(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    if task.status != TaskStatus.NEEDS_REVISION.value:
+        raise HTTPException(status_code=400, detail="Task is not in needs_revision status")
+    
+    # タスクを未割当状態に戻す
+    from ..schemas.cleaning import CleaningTaskUpdate
+    task_update = CleaningTaskUpdate(
+        status=TaskStatus.UNASSIGNED.value,
+        special_instructions=f"{task.special_instructions or ''}\n【修正対応完了】{resolution_notes}" if task.special_instructions else f"【修正対応完了】{resolution_notes}"
+    )
+    updated_task = crud.update_cleaning_task(db, task_id, task_update)
+    
+    return {
+        "message": "Task revision resolved",
+        "task_id": task_id,
+        "resolution_notes": resolution_notes
+    }
 
 @router.post("/tasks/auto-create")
 def auto_create_tasks(
@@ -263,10 +368,13 @@ def auto_create_tasks(
     db: Session = Depends(get_db)
 ):
     """チェックアウト日から清掃タスクを自動生成"""
-    created_tasks = crud.auto_create_cleaning_tasks(db, checkout_date)
+    result = crud.auto_create_cleaning_tasks(db, checkout_date)
     return {
-        "message": f"{len(created_tasks)} tasks created",
-        "task_ids": [task.id for task in created_tasks]
+        "message": f"{result.stats['created_tasks']} tasks created, {result.stats['errors']} errors",
+        "task_ids": [task.id for task in result.created_tasks],
+        "stats": result.stats,
+        "errors": result.errors,
+        "warnings": result.warnings
     }
 
 # ========== シフト管理 ==========
@@ -585,14 +693,27 @@ def auto_assign_tasks(
     request: TaskAutoAssignRequest,
     db: Session = Depends(get_db)
 ):
-    """タスク自動割当（簡易版）"""
-    # TODO: 実装する自動割当アルゴリズム
-    # 現在は簡易的な実装
+    """タスク自動割当（高度なアルゴリズム）
+    
+    割当優先順位:
+    1. スタッフの出勤可能日を確認
+    2. 既存シフト数が少ないスタッフを優先（負荷分散）
+    3. 施設への適合性を考慮
+    4. グループ割当の場合はグループメンバーを優先
+    5. タスクの優先度と締切を考慮
+    """
+    from ..crud import staff_availability as availability_crud
+    from ..crud import staff_group as group_crud
+    from collections import defaultdict
     
     assigned_count = 0
     failed_count = 0
     assignments = []
     errors = []
+    
+    # タスクを優先度でソート（高優先度、締切が近いものから）
+    task_ids_sorted = []
+    task_details = {}
     
     for task_id in request.task_ids:
         task = crud.get_cleaning_task(db, task_id)
@@ -606,19 +727,153 @@ def auto_assign_tasks(
             errors.append(f"Task {task_id} is already assigned")
             continue
         
-        # 利用可能なスタッフを探す（簡易版）
-        available_staff = crud.get_staff_list(db, is_active=True, facility_id=task.facility_id)
+        # タスクの詳細を保存
+        # priority は整数 (1-5、1が最高優先度)
+        priority_score = 0
+        if task.priority:
+            priority_score = (6 - task.priority) * 20  # 1->100, 2->80, 3->60, 4->40, 5->20
+        else:
+            priority_score = 60  # デフォルトは中程度
         
-        if not available_staff:
+        # checkout_dateまでの日数を考慮（deadlineフィールドは存在しない）
+        if task.checkout_date and request.date:
+            days_until_checkout = (task.checkout_date - request.date).days
+            priority_score += max(0, 10 - days_until_checkout)  # チェックアウトが近いほど高スコア
+        
+        task_details[task_id] = {
+            "task": task,
+            "priority_score": priority_score
+        }
+        task_ids_sorted.append((task_id, priority_score))
+    
+    # 優先度でソート
+    task_ids_sorted.sort(key=lambda x: x[1], reverse=True)
+    
+    # スタッフごとの既存シフト数をカウント
+    staff_shift_counts = defaultdict(int)
+    existing_shifts = crud.get_cleaning_shifts(
+        db, 
+        assigned_date=request.date,
+        limit=1000
+    )
+    for shift in existing_shifts:
+        staff_shift_counts[shift.staff_id] += 1
+    
+    # 各タスクに対して最適なスタッフを割り当て
+    for task_id, _ in task_ids_sorted:
+        task = task_details[task_id]["task"]
+        
+        # 利用可能なスタッフを取得
+        all_staff = crud.get_staff_list(db, is_active=True)
+        
+        # スタッフをスコアリング
+        staff_scores = []
+        
+        for staff in all_staff:
+            score = 0
+            reasons = []
+            
+            # 1. 出勤可能日チェック
+            if request.date:
+                availability = availability_crud.get_staff_availability(
+                    db,
+                    staff.id,
+                    request.date.year,
+                    request.date.month
+                )
+                
+                if availability:
+                    day_column = f"day_{request.date.day}"
+                    if hasattr(availability, day_column):
+                        is_available = getattr(availability, day_column)
+                        if not is_available:
+                            continue  # このスタッフは出勤不可
+                        else:
+                            score += 20
+                            reasons.append("available")
+            
+            # 2. 既存シフト数（負荷分散）
+            current_shifts = staff_shift_counts.get(staff.id, 0)
+            if current_shifts == 0:
+                score += 30
+                reasons.append("no_shifts")
+            elif current_shifts < 3:
+                score += 20
+                reasons.append("few_shifts")
+            elif current_shifts < 5:
+                score += 10
+                reasons.append("moderate_shifts")
+            else:
+                score += 0  # 既に多くのシフトがある
+                reasons.append("many_shifts")
+            
+            # 3. 施設への適合性
+            if staff.available_facilities:
+                if task.facility_id in staff.available_facilities:
+                    score += 25
+                    reasons.append("facility_match")
+                else:
+                    # 施設が合わない場合はスキップ
+                    continue
+            else:
+                # 施設指定がない場合は全施設対応可能とみなす
+                score += 15
+                reasons.append("all_facilities")
+            
+            # 4. グループ割当の考慮
+            if hasattr(task, 'assigned_group_id') and task.assigned_group_id:
+                # グループメンバーかチェック
+                members = group_crud.get_group_members(db, task.assigned_group_id)
+                member_ids = [m.staff_id for m in members if not m.left_date]
+                if staff.id in member_ids:
+                    score += 40  # グループメンバーを強く優先
+                    reasons.append("group_member")
+                else:
+                    # グループ専用タスクの場合、メンバー以外は除外
+                    continue
+            
+            # 5. 大型施設対応能力（max_guests > 6 を大型施設とみなす）
+            if task.facility_id:
+                facility = db.query(Facility).filter(Facility.id == task.facility_id).first()
+                if facility and facility.max_guests and facility.max_guests > 6:
+                    if getattr(staff, 'can_handle_large_properties', False):
+                        score += 15
+                        reasons.append("large_property_capable")
+                    else:
+                        score -= 10
+                        reasons.append("not_large_capable")
+            
+            # 6. スキルレベル（将来的な拡張用）
+            if hasattr(staff, 'skill_level'):
+                if staff.skill_level == "expert":
+                    score += 10
+                    reasons.append("expert")
+                elif staff.skill_level == "intermediate":
+                    score += 5
+                    reasons.append("intermediate")
+            
+            staff_scores.append({
+                "staff": staff,
+                "score": score,
+                "reasons": reasons
+            })
+        
+        # スコアでソート（高い順）
+        staff_scores.sort(key=lambda x: x["score"], reverse=True)
+        
+        # 最適なスタッフを選択
+        if not staff_scores:
             failed_count += 1
             errors.append(f"No available staff for task {task_id}")
             continue
         
-        # 最初のスタッフに割り当て（簡易版）
-        staff = available_staff[0]
+        best_staff = staff_scores[0]["staff"]
+        best_score = staff_scores[0]["score"]
+        assignment_reasons = staff_scores[0]["reasons"]
         
+        # シフトを作成
         shift_create = CleaningShiftCreate(
-            staff_id=staff.id,
+            staff_id=best_staff.id,
             task_id=task.id,
             assigned_date=request.date,
             scheduled_start_time=task.scheduled_start_time or "11:00",
@@ -629,11 +884,17 @@ def auto_assign_tasks(
         try:
             shift = crud.create_cleaning_shift(db, shift_create)
             assigned_count += 1
+            
+            # このスタッフのシフト数を更新
+            staff_shift_counts[best_staff.id] += 1
+            
             assignments.append({
                 "task_id": task.id,
-                "staff_id": staff.id,
-                "staff_name": staff.name,
-                "shift_id": shift.id
+                "staff_id": best_staff.id,
+                "staff_name": best_staff.name,
+                "shift_id": shift.id,
+                "score": best_score,
+                "reasons": assignment_reasons
             })
         except Exception as e:
             failed_count += 1
@@ -644,7 +905,8 @@ def auto_assign_tasks(
         assigned_count=assigned_count,
         failed_count=failed_count,
         assignments=assignments,
-        errors=errors
+        errors=errors,
+        message=f"自動割当完了: {assigned_count}件成功, {failed_count}件失敗"
     )
 
 # ========== スタッフ出勤可能日管理 ==========

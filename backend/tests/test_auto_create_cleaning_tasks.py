@@ -53,8 +53,10 @@ def test_auto_create_cleaning_tasks_commits_without_tasks():
     db.add(existing_task)
     db.commit()
 
-    created = crud.auto_create_cleaning_tasks(db, reservation.check_out_date)
-    assert created == []
+    result = crud.auto_create_cleaning_tasks(db, reservation.check_out_date)
+    assert result.created_tasks == []
+    assert result.stats['created_tasks'] == 0
+    assert result.stats['skipped_existing'] == 1
     reservation_id = reservation.id
 
     db.close()

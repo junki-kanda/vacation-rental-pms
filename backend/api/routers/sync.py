@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Query, Path as PathParam
 from sqlalchemy.orm import Session
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from pydantic import BaseModel
 import shutil
 import os
@@ -15,7 +16,14 @@ from ..services import SyncService
 class ProcessLocalRequest(BaseModel):
     filename: str
 
-router = APIRouter(prefix="/api/sync", tags=["sync"])
+router = APIRouter(
+    prefix="/api/sync",
+    tags=["データ同期"],
+    responses={
+        404: {"description": "Not found"},
+        400: {"description": "Bad request"}
+    }
+)
 
 # 設定
 CSV_DIR = os.getenv("CSV_DIR", "./data/csv")
@@ -135,6 +143,39 @@ def list_csv_files():
                 "modified": datetime.fromtimestamp(file.stat().st_mtime).isoformat()
             })
     return {"files": csv_files}
+
+@router.get("/statistics")
+def get_sync_statistics(
+    days: int = Query(30, ge=1, le=365, description="統計対象の過去日数"),
+    db: Session = Depends(get_db)
+):
+    """同期統計を取得（日付フィルタリング対応）"""
+    stats = sync_service.get_sync_statistics(db, days)
+    return stats
+
+@router.get("/logs")
+def get_sync_logs(
+    start_date: Optional[datetime] = Query(None, description="開始日時"),
+    end_date: Optional[datetime] = Query(None, description="終了日時"),
+    status: Optional[str] = Query(None, description="ステータスフィルタ"),
+    limit: int = Query(100, ge=1, le=1000, description="取得件数"),
+    db: Session = Depends(get_db)
+):
+    """日付範囲とステータスで同期ログを取得"""
+    logs = sync_service.get_sync_logs_by_date_range(
+        db, start_date, end_date, status, limit
+    )
+    return {"logs": logs, "count": len(logs)}
+
+@router.get("/monthly-summary/{year}/{month}")
+def get_monthly_sync_summary(
+    year: int = PathParam(..., ge=2020, le=2100, description="年"),
+    month: int = PathParam(..., ge=1, le=12, description="月"),
+    db: Session = Depends(get_db)
+):
+    """月別の同期サマリーを取得"""
+    summary = sync_service.get_sync_summary_by_month(db, year, month)
+    return summary
 
 @router.post("/process-local")
 async def process_local_csv(

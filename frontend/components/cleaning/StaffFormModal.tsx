@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import cleaningApi, { Staff } from '@/lib/api/cleaning';
-import { X } from 'lucide-react';
+import { cleaningApi as api } from '@/lib/api';
+import { X, Check } from 'lucide-react';
 
 interface StaffFormModalProps {
   staff?: Staff | null;
@@ -39,6 +40,13 @@ export default function StaffFormModal({ staff, onClose }: StaffFormModalProps) 
     is_active: staff?.is_active ?? true,
     notes: staff?.notes || '',
     available_schedule: staff?.available_schedule || {},
+    available_facilities: staff?.available_facilities || [],
+  });
+
+  // 施設一覧を取得
+  const { data: facilities = [] } = useQuery({
+    queryKey: ['facilities'],
+    queryFn: () => api.getFacilities(),
   });
 
   // スタッフ作成
@@ -64,7 +72,7 @@ export default function StaffFormModal({ staff, onClose }: StaffFormModalProps) 
     
     const submitData = {
       ...formData,
-      available_facilities: [], // TODO: 施設選択UI実装
+      // available_facilities は既にformDataに含まれているため削除
     };
 
     if (isEdit) {
@@ -72,6 +80,15 @@ export default function StaffFormModal({ staff, onClose }: StaffFormModalProps) 
     } else {
       await createMutation.mutateAsync(submitData);
     }
+  };
+
+  const handleFacilityToggle = (facilityId: number) => {
+    setFormData((prev) => ({
+      ...prev,
+      available_facilities: prev.available_facilities.includes(facilityId)
+        ? prev.available_facilities.filter(id => id !== facilityId)
+        : [...prev.available_facilities, facilityId],
+    }));
   };
 
   const handleScheduleChange = (day: string, field: 'start' | 'end', value: string) => {
@@ -151,6 +168,62 @@ export default function StaffFormModal({ staff, onClose }: StaffFormModalProps) 
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
                 />
+              </div>
+            </div>
+          </div>
+
+          {/* 対応可能施設 */}
+          <div>
+            <h3 className="text-md font-medium text-gray-900 mb-4">対応可能施設</h3>
+            <div className="space-y-2">
+              {facilities.length > 0 ? (
+                <div className="grid grid-cols-2 gap-3 max-h-48 overflow-y-auto p-2 border rounded-md">
+                  {facilities.map((facility) => (
+                    <label
+                      key={facility.id}
+                      className="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 p-2 rounded"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={formData.available_facilities.includes(facility.id)}
+                        onChange={() => handleFacilityToggle(facility.id)}
+                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="text-sm text-gray-700 flex-1">
+                        {facility.name}
+                        {facility.max_guests && facility.max_guests > 6 && (
+                          <span className="ml-1 text-xs text-orange-600 font-medium">
+                            (大型)
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">施設データを読み込み中...</p>
+              )}
+              <div className="flex items-center space-x-4 mt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allFacilityIds = facilities.map(f => f.id);
+                    setFormData(prev => ({ ...prev, available_facilities: allFacilityIds }));
+                  }}
+                  className="text-xs text-indigo-600 hover:text-indigo-500"
+                >
+                  すべて選択
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData(prev => ({ ...prev, available_facilities: [] }))}
+                  className="text-xs text-gray-600 hover:text-gray-500"
+                >
+                  選択解除
+                </button>
+                <span className="text-xs text-gray-500">
+                  {formData.available_facilities.length}/{facilities.length} 施設選択中
+                </span>
               </div>
             </div>
           </div>

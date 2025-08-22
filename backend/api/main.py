@@ -9,6 +9,7 @@ import json
 from .database import engine
 from .models import Base
 from .routers import reservations_router, properties_router, sync_router, dashboard_router, cleaning_router, staff_groups_router
+from .docs_config import tags_metadata
 
 # ロギング設定
 logging.basicConfig(level=logging.INFO)
@@ -19,9 +20,37 @@ Base.metadata.create_all(bind=engine)
 
 # FastAPIアプリケーション
 app = FastAPI(
-    title="Vacation Rental PMS",
-    description="一棟貸の貸別荘に特化したPMSシステム",
+    title="Vacation Rental PMS API",
+    description="""
+## 一棟貸の貸別荘に特化したPMSシステム
+
+### 主な機能:
+- **予約管理**: 複数OTAからの予約データの統合管理
+- **施設管理**: 施設情報、部屋タイプ、料金設定の管理
+- **清掃管理**: 清掃タスクの自動生成、スタッフ割当、進捗管理
+- **ダッシュボード**: リアルタイム統計、稼働率、売上分析
+- **データ同期**: CSVファイルによるバッチ同期機能
+
+### 認証:
+現在のバージョンでは認証は実装されていません。本番環境では適切な認証機構を実装してください。
+
+### レート制限:
+現在のバージョンではレート制限は実装されていません。
+
+### エラーレスポンス:
+すべてのエンドポイントは標準的なHTTPステータスコードを返します。
+- 200: 成功
+- 201: 作成成功
+- 400: リクエストエラー
+- 404: リソースが見つからない
+- 422: バリデーションエラー
+- 500: サーバーエラー
+    """,
     version="1.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+    openapi_tags=tags_metadata,
     default_response_class=JSONResponse
 )
 

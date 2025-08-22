@@ -4,7 +4,7 @@ from api.services.parser import NeppanCSVParser
 
 def test_number_columns_conversion(tmp_path):
     csv_content = (
-        "予約ID,予約区分,チェックイン日,チェックアウト日,予約サイト名称,部屋タイプ名称,宿泊者名,大人人数計,子供人数計,幼児人数計\n"
+        "予約ID,予約区分,チェックイン日,チェックアウト日,予約サイト名称,部屋タイプ名称,宿泊者氏名,大人人数計,子供人数計,幼児人数計\n"
         "1,通常,2024/01/01,2024/01/02,テストサイト,テスト部屋,山田太郎,2,1,1\n"
     )
     csv_file = tmp_path / "test.csv"
