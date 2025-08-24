@@ -203,320 +203,97 @@ def update_cleaning_task(
     db.refresh(db_task)
     return db_task
 
-import logging
-from typing import Dict, List, Optional, Tuple
-from sqlalchemy.exc import SQLAlchemyError
-
-logger = logging.getLogger(__name__)
-
-class TaskCreationError(Exception):
-    """清掃タスク作成時のエラー"""
-    def __init__(self, message: str, reservation_id: Optional[int] = None, details: Optional[Dict] = None):
-        super().__init__(message)
-        self.reservation_id = reservation_id
-        self.details = details or {}
-
-class TaskCreationResult:
-    """タスク作成結果"""
-    def __init__(self):
-        self.created_tasks: List[CleaningTaskModel] = []
-        self.errors: List[Dict] = []
-        self.warnings: List[Dict] = []
-        self.stats = {
-            'total_reservations': 0,
-            'created_tasks': 0,
-            'skipped_existing': 0,
-            'created_facilities': 0,
-            'errors': 0
-        }
-
-def auto_create_cleaning_tasks(db: Session, checkout_date: date) -> TaskCreationResult:
-    """チェックアウト予約から清掃タスクを自動生成
+def auto_create_cleaning_tasks(db: Session, checkout_date: date) -> List[CleaningTaskModel]:
+    """チェックアウト予約から清掃タスクを自動生成"""
+    # チェックアウトする予約を取得
+    reservations = db.query(Reservation).filter(
+        and_(
+            Reservation.check_out_date == checkout_date,
+            Reservation.reservation_type != "キャンセル"
+        )
+    ).all()
     
-    Args:
-        db: データベースセッション
-        checkout_date: チェックアウト日
-        
-    Returns:
-        TaskCreationResult: 作成結果の詳細情報
-    """
-    result = TaskCreationResult()
-    
-    try:
-        # バリデーション
-        if not checkout_date:
-            raise ValueError("checkout_date is required")
-        
-        # チェックアウトする予約を取得
-        reservations = db.query(Reservation).filter(
-            and_(
-                Reservation.check_out_date == checkout_date,
-                Reservation.reservation_type != "キャンセル"
-            )
-        ).all()
-        
-        result.stats['total_reservations'] = len(reservations)
-        logger.info(f"Found {len(reservations)} reservations for checkout on {checkout_date}")
-        
-        if not reservations:
-            logger.info(f"No reservations found for checkout date {checkout_date}")
-            return result
-        
-        # 各予約に対してタスクを作成
-        for reservation in reservations:
-            try:
-                # 予約データの基本バリデーション
-                if not reservation.id:
-                    logger.warning(f"Reservation without ID found, skipping")
-                    continue
-                
-                # 施設IDの処理（既存タスクがあってもfacility_idは必要）
-                facility_id = _ensure_facility_exists(db, reservation, result)
-                if not facility_id:
-                    error = {
-                        'reservation_id': reservation.id,
-                        'error': 'Failed to resolve facility',
-                        'details': {
-                            'reservation_number': reservation.reservation_number,
-                            'room_type': reservation.room_type
-                        }
-                    }
-                    result.errors.append(error)
-                    result.stats['errors'] += 1
-                    continue
-                
-                # 既存タスクがないか確認
-                existing = db.query(CleaningTaskModel).filter(
-                    CleaningTaskModel.reservation_id == reservation.id
+    created_tasks = []
+    for reservation in reservations:
+        # facility_idがない場合の処理
+        if not reservation.facility_id:
+            # room_typeから施設を推定
+            if reservation.room_type:
+                # 施設名で検索
+                facility = db.query(Facility).filter(
+                    Facility.name == reservation.room_type
                 ).first()
-                
-                if existing:
-                    logger.debug(f"Task already exists for reservation {reservation.id}, skipping task creation")
-                    result.stats['skipped_existing'] += 1
-                    continue
-                
-                # タスク作成
-                task = _create_task_from_reservation(db, reservation, facility_id, checkout_date)
-                result.created_tasks.append(task)
-                result.stats['created_tasks'] += 1
-                
-                logger.info(f"Created cleaning task {task.id} for reservation {reservation.id}")
-                
-            except TaskCreationError as e:
-                error = {
-                    'reservation_id': e.reservation_id or reservation.id,
-                    'error': str(e),
-                    'details': e.details
-                }
-                result.errors.append(error)
-                result.stats['errors'] += 1
-                logger.error(f"Task creation error for reservation {reservation.id}: {e}")
-                
-            except Exception as e:
-                error = {
-                    'reservation_id': reservation.id,
-                    'error': f"Unexpected error: {str(e)}",
-                    'details': {
-                        'reservation_number': getattr(reservation, 'reservation_number', None),
-                        'room_type': getattr(reservation, 'room_type', None)
-                    }
-                }
-                result.errors.append(error)
-                result.stats['errors'] += 1
-                logger.error(f"Unexpected error for reservation {reservation.id}: {e}", exc_info=True)
-        
-        # 変更をコミット（タスク作成、施設作成、予約更新など）
-        db.commit()
-        
-        # 作成されたタスクをリフレッシュ
-        for task in result.created_tasks:
-            db.refresh(task)
-            
-        if result.created_tasks:
-            logger.info(f"Successfully created {len(result.created_tasks)} cleaning tasks")
-        else:
-            logger.info("No new tasks were created")
-            
-        if result.stats['created_facilities'] > 0:
-            logger.info(f"Created {result.stats['created_facilities']} new facilities")
-            
-    except SQLAlchemyError as e:
-        db.rollback()
-        logger.error(f"Database error during task creation: {e}", exc_info=True)
-        result.errors.append({
-            'error': 'Database error',
-            'details': {'message': str(e)}
-        })
-        result.stats['errors'] += 1
-        
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Unexpected error in auto_create_cleaning_tasks: {e}", exc_info=True)
-        result.errors.append({
-            'error': 'System error',
-            'details': {'message': str(e)}
-        })
-        result.stats['errors'] += 1
-    
-    return result
-
-
-def _ensure_facility_exists(db: Session, reservation: Reservation, result: TaskCreationResult) -> Optional[int]:
-    """施設の存在を確認し、必要に応じて作成"""
-    try:
-        # 既に facility_id がある場合
-        if reservation.facility_id:
-            facility = db.query(Facility).filter(Facility.id == reservation.facility_id).first()
-            if facility:
-                return reservation.facility_id
+                if facility:
+                    reservation.facility_id = facility.id
+                    db.add(reservation)
+                else:
+                    # room_typeから施設を作成
+                    new_facility = Facility(
+                        name=reservation.room_type,
+                        is_active=True
+                    )
+                    db.add(new_facility)
+                    db.flush()  # IDを取得するためにflush
+                    reservation.facility_id = new_facility.id
+                    db.add(reservation)
+                    print(f"Created new facility '{reservation.room_type}' for reservation {reservation.id}")
             else:
-                logger.warning(f"Invalid facility_id {reservation.facility_id} for reservation {reservation.id}")
-                reservation.facility_id = None
+                # デフォルトの施設IDを設定
+                default_facility = db.query(Facility).first()
+                if default_facility:
+                    reservation.facility_id = default_facility.id
+                    db.add(reservation)
+                else:
+                    # デフォルト施設を作成
+                    new_facility = Facility(
+                        name="デフォルト施設",
+                        is_active=True
+                    )
+                    db.add(new_facility)
+                    db.flush()
+                    reservation.facility_id = new_facility.id
+                    db.add(reservation)
+                    print(f"Created default facility for reservation {reservation.id}")
         
-        # room_type から施設を検索/作成
-        if reservation.room_type is not None:
-            # 施設名のバリデーション（空文字や空白のみをチェック）
-            if len(reservation.room_type.strip()) == 0:
-                raise TaskCreationError(
-                    "Room type is empty",
-                    reservation.id,
-                    {'room_type': reservation.room_type}
-                )
-            
-            facility = db.query(Facility).filter(
-                Facility.name == reservation.room_type
-            ).first()
-            
-            if facility:
-                reservation.facility_id = facility.id
-                db.add(reservation)
-                return facility.id
-            else:
-                
-                # 新しい施設を作成
-                new_facility = Facility(
-                    name=reservation.room_type.strip(),
-                    is_active=True
-                )
-                db.add(new_facility)
-                db.flush()  # IDを取得
-                
-                reservation.facility_id = new_facility.id
-                db.add(reservation)
-                result.stats['created_facilities'] += 1
-                
-                logger.info(f"Created new facility '{reservation.room_type}' (ID: {new_facility.id}) for reservation {reservation.id}")
-                return new_facility.id
-        
-        # デフォルト施設の処理
-        default_facility = db.query(Facility).filter(Facility.is_active == True).first()
-        if default_facility:
-            reservation.facility_id = default_facility.id
-            db.add(reservation)
-            result.warnings.append({
-                'reservation_id': reservation.id,
-                'warning': 'Used default facility due to missing room_type',
-                'details': {'facility_name': default_facility.name}
-            })
-            return default_facility.id
-        else:
-            # デフォルト施設を作成
-            new_facility = Facility(
-                name="デフォルト施設",
-                is_active=True
-            )
-            db.add(new_facility)
-            db.flush()
-            
-            reservation.facility_id = new_facility.id
-            db.add(reservation)
-            result.stats['created_facilities'] += 1
-            
-            result.warnings.append({
-                'reservation_id': reservation.id,
-                'warning': 'Created default facility',
-                'details': {'facility_name': new_facility.name}
-            })
-            
-            logger.info(f"Created default facility (ID: {new_facility.id}) for reservation {reservation.id}")
-            return new_facility.id
-            
-    except TaskCreationError:
-        # Re-raise TaskCreationError to be handled by the main function
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error ensuring facility for reservation {reservation.id}: {e}")
-        return None
-
-
-def _create_task_from_reservation(
-    db: Session, 
-    reservation: Reservation, 
-    facility_id: int, 
-    checkout_date: date
-) -> CleaningTaskModel:
-    """予約情報からタスクを作成"""
-    try:
-        # 施設の清掃設定を取得
-        settings = db.query(FacilityCleaningSettingsModel).filter(
-            FacilityCleaningSettingsModel.facility_id == facility_id
+        # 既存タスクがないか確認
+        existing = db.query(CleaningTaskModel).filter(
+            CleaningTaskModel.reservation_id == reservation.id
         ).first()
         
-        # デフォルト値
-        duration = 300  # デフォルト5時間
-        start_time = time(11, 0)  # デフォルト11:00開始
-        end_time = time(16, 0)  # デフォルト16:00終了
-        
-        if settings:
-            duration = settings.standard_duration_minutes or duration
-            if settings.preferred_start_time:
-                start_time = settings.preferred_start_time
-            if settings.preferred_end_time:
-                end_time = settings.preferred_end_time
-        
-        # 優先度の決定
-        priority = 3  # デフォルト
-        if hasattr(reservation, 'num_adults') and reservation.num_adults:
-            # ゲスト数に基づく優先度調整
-            if reservation.num_adults + (reservation.num_children or 0) > 6:
-                priority = 2  # 大人数の場合は高優先度
-        
-        # タスク作成
-        task = CleaningTaskModel(
-            reservation_id=reservation.id,
-            facility_id=facility_id,
-            checkout_date=checkout_date,
-            checkout_time=time(10, 0),  # デフォルト10:00チェックアウト
-            scheduled_date=checkout_date,
-            scheduled_start_time=start_time,
-            scheduled_end_time=end_time,
-            estimated_duration_minutes=duration,
-            priority=priority,
-            status=TaskStatus.UNASSIGNED
-        )
-        
-        # タスクのバリデーション
-        if task.scheduled_start_time >= task.scheduled_end_time:
-            raise TaskCreationError(
-                "Invalid schedule times",
-                reservation.id,
-                {
-                    'start_time': str(task.scheduled_start_time),
-                    'end_time': str(task.scheduled_end_time)
-                }
+        if not existing:
+            # 施設の清掃設定を取得
+            settings = db.query(FacilityCleaningSettingsModel).filter(
+                FacilityCleaningSettingsModel.facility_id == reservation.facility_id
+            ).first()
+            
+            # デフォルト値
+            duration = 300  # デフォルト5時間
+            if settings:
+                duration = settings.standard_duration_minutes
+            
+            # タスク作成
+            task = CleaningTaskModel(
+                reservation_id=reservation.id,
+                facility_id=reservation.facility_id,
+                checkout_date=checkout_date,
+                checkout_time=time(10, 0),  # デフォルト10:00
+                scheduled_date=checkout_date,
+                scheduled_start_time=time(11, 0),  # デフォルト11:00開始
+                scheduled_end_time=time(16, 0),  # デフォルト16:00終了
+                estimated_duration_minutes=duration,
+                priority=3,
+                status=TaskStatus.UNASSIGNED
             )
-        
-        db.add(task)
-        db.flush()  # IDを取得
-        
-        return task
-        
-    except Exception as e:
-        raise TaskCreationError(
-            f"Failed to create task: {str(e)}",
-            reservation.id,
-            {'facility_id': facility_id}
-        )
+            
+            db.add(task)
+            created_tasks.append(task)
+    
+    if created_tasks:
+        db.commit()
+        for task in created_tasks:
+            db.refresh(task)
+    
+    return created_tasks
 
 # ========== シフト関連 ==========
 
@@ -665,29 +442,6 @@ def delete_cleaning_shift(db: Session, shift_id: int) -> bool:
         if task:
             task.status = TaskStatus.UNASSIGNED
             task.updated_at = datetime.utcnow()
-    
-    db.commit()
-    return True
-
-def unassign_task_from_staff(db: Session, task_id: int) -> bool:
-    """タスクからスタッフ/グループの割り当てを解除"""
-    # タスクに関連するすべてのシフトを取得
-    shifts = db.query(CleaningShiftModel).filter(
-        CleaningShiftModel.task_id == task_id
-    ).all()
-    
-    if not shifts:
-        return False
-    
-    # すべてのシフトを削除
-    for shift in shifts:
-        db.delete(shift)
-    
-    # タスクのステータスを未割当に戻す
-    task = db.query(CleaningTaskModel).filter(CleaningTaskModel.id == task_id).first()
-    if task:
-        task.status = TaskStatus.UNASSIGNED
-        task.updated_at = datetime.utcnow()
     
     db.commit()
     return True

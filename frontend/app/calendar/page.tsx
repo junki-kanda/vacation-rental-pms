@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/main-layout';
-import MonthCalendarV4 from '@/components/calendar/MonthCalendarV4';
-import WeekCalendarV3 from '@/components/calendar/WeekCalendarV3';
+import MonthCalendarV3 from '@/components/calendar/MonthCalendarV3';
+import WeekCalendarV2 from '@/components/calendar/WeekCalendarV2';
 import { useQuery } from '@tanstack/react-query';
 import { calendarApi } from '@/lib/api';
 import { Calendar as CalendarIcon, Building, Eye, EyeOff, CalendarDays, CalendarRange } from 'lucide-react';
@@ -31,8 +31,8 @@ export default function CalendarPage() {
     (searchParams.get('view') as ViewType) || 'month'
   );
 
-  // 状態が変更されたときにURLを更新（メモ化）
-  const updateURL = useCallback((updates: Partial<{
+  // 状態が変更されたときにURLを更新
+  const updateURL = (updates: Partial<{
     date: Date;
     roomType: string;
     showCancelled: boolean;
@@ -51,69 +51,55 @@ export default function CalendarPage() {
     params.set('view', view);
     
     router.replace(`/calendar?${params.toString()}`, { scroll: false });
-  }, [router, currentDate, selectedRoomType, showCancelled, viewType]);
+  };
 
-  const handleDateChange = useCallback((date: Date) => {
+  const handleDateChange = (date: Date) => {
     setCurrentDate(date);
     updateURL({ date });
-  }, [updateURL]);
+  };
 
-  const handleRoomTypeChange = useCallback((roomType: string) => {
+  const handleRoomTypeChange = (roomType: string) => {
     setSelectedRoomType(roomType);
     updateURL({ roomType });
-  }, [updateURL]);
+  };
 
-  const handleShowCancelledChange = useCallback((showCancelled: boolean) => {
+  const handleShowCancelledChange = (showCancelled: boolean) => {
     setShowCancelled(showCancelled);
     updateURL({ showCancelled });
-  }, [updateURL]);
+  };
 
-  const handleViewTypeChange = useCallback((view: ViewType) => {
+  const handleViewTypeChange = (view: ViewType) => {
     setViewType(view);
     updateURL({ view });
-  }, [updateURL]);
+  };
 
-  // 日付範囲の計算をメモ化
-  const dateRange = useMemo(() => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const startDate = new Date(year, month, 1);
-    const endDate = new Date(year, month + 1, 0);
-    
-    return {
-      start: startDate.toISOString().split('T')[0],
-      end: endDate.toISOString().split('T')[0],
-      year,
-      month
-    };
-  }, [currentDate]);
-
-  // 部屋タイプ一覧取得（キャッシュ時間を延長）
+  // 部屋タイプ一覧取得
   const { data: roomTypes } = useQuery({
     queryKey: ['room-types'],
     queryFn: () => calendarApi.getRoomTypes(),
-    staleTime: 5 * 60 * 1000, // 5分間はフレッシュとして扱う
-    gcTime: 10 * 60 * 1000, // 10分間キャッシュを保持
   });
   
-  // 施設一覧取得（キャッシュ時間を延長）
+  // 施設一覧取得
   const { data: facilities } = useQuery({
     queryKey: ['facilities'],
     queryFn: () => calendarApi.getFacilities(),
-    staleTime: 5 * 60 * 1000, // 5分間はフレッシュとして扱う
-    gcTime: 10 * 60 * 1000, // 10分間キャッシュを保持
   });
 
-  // 予約データ取得（最適化されたクエリキー）
+  // 予約データ取得（仮）
   const { data: reservations, isLoading } = useQuery({
-    queryKey: ['calendar-reservations', dateRange.year, dateRange.month, selectedRoomType],
-    queryFn: () => calendarApi.getReservations(
-      dateRange.start,
-      dateRange.end,
-      selectedRoomType || undefined
-    ),
-    staleTime: 2 * 60 * 1000, // 2分間はフレッシュとして扱う
-    gcTime: 5 * 60 * 1000, // 5分間キャッシュを保持
+    queryKey: ['calendar-reservations', currentDate, selectedRoomType],
+    queryFn: () => {
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      const startDate = new Date(year, month, 1);
+      const endDate = new Date(year, month + 1, 0);
+      
+      return calendarApi.getReservations(
+        startDate.toISOString().split('T')[0],
+        endDate.toISOString().split('T')[0],
+        selectedRoomType || undefined
+      );
+    },
   });
 
   if (isLoading) {
@@ -152,20 +138,18 @@ export default function CalendarPage() {
                 className="px-3 py-1 border border-gray-300 rounded-md text-sm"
               >
                 <option value="">全施設</option>
-                {useMemo(() => 
-                  facilities?.sort((a, b) => {
-                    // 施設グループでソート、次に施設名でソート
-                    if (a.facility_group && b.facility_group) {
-                      const groupCompare = a.facility_group.localeCompare(b.facility_group);
-                      if (groupCompare !== 0) return groupCompare;
-                    } else if (a.facility_group) {
-                      return -1;
-                    } else if (b.facility_group) {
-                      return 1;
-                    }
-                    return a.name.localeCompare(b.name);
-                  }) || [], [facilities]
-                ).map((facility) => (
+                {facilities?.sort((a, b) => {
+                  // 施設グループでソート、次に施設名でソート
+                  if (a.facility_group && b.facility_group) {
+                    const groupCompare = a.facility_group.localeCompare(b.facility_group);
+                    if (groupCompare !== 0) return groupCompare;
+                  } else if (a.facility_group) {
+                    return -1;
+                  } else if (b.facility_group) {
+                    return 1;
+                  }
+                  return a.name.localeCompare(b.name);
+                }).map((facility) => (
                   <option key={facility.id} value={facility.name}>
                     {facility.facility_group ? `[${facility.facility_group}] ${facility.name}` : facility.name}
                   </option>
@@ -225,7 +209,7 @@ export default function CalendarPage() {
 
         {/* カレンダー本体 */}
         {viewType === 'month' ? (
-          <MonthCalendarV4
+          <MonthCalendarV3
             currentDate={currentDate}
             onDateChange={handleDateChange}
             reservations={reservations}
@@ -234,7 +218,7 @@ export default function CalendarPage() {
             showCancelled={showCancelled}
           />
         ) : (
-          <WeekCalendarV3
+          <WeekCalendarV2
             currentDate={currentDate}
             onDateChange={handleDateChange}
             reservations={reservations}

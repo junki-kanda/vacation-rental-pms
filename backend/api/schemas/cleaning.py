@@ -272,7 +272,6 @@ class TaskAutoAssignResponse(BaseModel):
     failed_count: int
     assignments: List[Dict[str, Any]]
     errors: List[str] = []
-    message: Optional[str] = None
 
 class StaffMonthlyStats(BaseModel):
     """スタッフ月次統計"""

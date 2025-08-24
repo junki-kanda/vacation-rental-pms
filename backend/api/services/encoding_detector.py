@@ -1,18 +1,9 @@
 """文字エンコーディング検出サービス"""
 
+import chardet
 from pathlib import Path
-from typing import Dict, Any
+from typing import Optional, Dict, Any
 import logging
-
-# ``chardet`` は任意依存関係。存在しない環境でもモジュールを
-# インポートできるように、読み込み時に失敗を許容する。
-try:  # pragma: no cover - 環境依存のため
-    import chardet  # type: ignore
-except ModuleNotFoundError:  # ライブラリが無い場合
-    chardet = None  # type: ignore
-    logging.getLogger(__name__).warning(
-        "chardet library not installed. Falling back to naive encoding detection."
-    )
 
 logger = logging.getLogger(__name__)
 
@@ -51,18 +42,11 @@ class EncodingDetector:
         if not path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
             
-        result = {
-            'encoding': None,
-            'confidence': 0,
-            'language': 'unknown',
-        }
-
-        # chardet が利用可能な場合のみ自動検出を試みる
-        if chardet is not None:
-            with open(file_path, 'rb') as f:
-                raw_data = f.read(sample_size)
-                result = chardet.detect(raw_data)
-
+        # chardetで自動検出
+        with open(file_path, 'rb') as f:
+            raw_data = f.read(sample_size)
+            result = chardet.detect(raw_data)
+        
         detected_encoding = result.get('encoding')
         confidence = result.get('confidence', 0)
         

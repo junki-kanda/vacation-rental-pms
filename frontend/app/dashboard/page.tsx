@@ -2,54 +2,25 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { MainLayout } from '@/components/layout/main-layout';
-import { dashboardApi, type DashboardStats, type Reservation } from '@/lib/api';
+import { dashboardApi } from '@/lib/api';
 import { format } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import {
-  Calendar, Users, Building, Activity, AlertCircle, RefreshCw
+  Calendar, Users, Building, Activity, User, CreditCard
 } from 'lucide-react';
 
 export default function DashboardPage() {
-  // 基本統計情報（30秒間隔で自動更新）
-  const { data: stats, isLoading, error, refetch, isRefetching } = useQuery({
+  // 基本統計情報
+  const { data: stats, isLoading } = useQuery({
     queryKey: ['dashboard-stats'],
     queryFn: () => dashboardApi.getStats(),
-    refetchInterval: 30000, // 30秒ごとに自動更新
-    refetchIntervalInBackground: true,
-    retry: 2,
-    retryDelay: 1000,
   });
 
   if (isLoading) {
     return (
       <MainLayout>
         <div className="flex items-center justify-center h-64">
-          <div className="flex items-center space-x-3">
-            <RefreshCw className="h-6 w-6 animate-spin text-blue-600" />
-            <div className="text-gray-500">ダッシュボードを読み込み中...</div>
-          </div>
-        </div>
-      </MainLayout>
-    );
-  }
-
-  if (error) {
-    return (
-      <MainLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-center">
-            <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-            <div className="text-gray-900 font-medium mb-2">データの取得に失敗しました</div>
-            <div className="text-gray-500 text-sm mb-4">
-              {error instanceof Error ? error.message : 'ネットワークエラーが発生しました'}
-            </div>
-            <button
-              onClick={() => refetch()}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-            >
-              再試行
-            </button>
-          </div>
+          <div className="text-gray-500">読み込み中...</div>
         </div>
       </MainLayout>
     );
@@ -59,28 +30,11 @@ export default function DashboardPage() {
     <MainLayout>
       <div className="max-w-7xl mx-auto">
         {/* ヘッダー */}
-        <div className="mb-6 flex justify-between items-start">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">ダッシュボード</h1>
-            <p className="text-sm text-gray-500 mt-1">
-              {format(new Date(), 'yyyy年MM月dd日 HH:mm', { locale: ja })} 時点
-            </p>
-          </div>
-          <div className="flex items-center space-x-2">
-            {isRefetching && (
-              <div className="flex items-center text-blue-600 text-sm">
-                <RefreshCw className="h-4 w-4 animate-spin mr-1" />
-                更新中...
-              </div>
-            )}
-            <button
-              onClick={() => refetch()}
-              disabled={isRefetching}
-              className="px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors disabled:opacity-50"
-            >
-              <RefreshCw className={`h-4 w-4 ${isRefetching ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-gray-900">ダッシュボード</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            {format(new Date(), 'yyyy年MM月dd日 HH:mm', { locale: ja })} 時点
+          </p>
         </div>
 
         {/* 本日の統計 */}
@@ -164,44 +118,36 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {stats?.recent_reservations && stats.recent_reservations.length > 0 ? (
-                  stats.recent_reservations.map((reservation: Reservation) => (
-                    <tr key={reservation.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {reservation.reservation_id}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {reservation.guest_name}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {format(new Date(reservation.check_in_date), 'MM/dd', { locale: ja })}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {format(new Date(reservation.check_out_date), 'MM/dd', { locale: ja })}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {reservation.room_type}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                          reservation.reservation_type === '予約'
-                            ? 'bg-green-100 text-green-800'
-                            : reservation.reservation_type === 'キャンセル'
-                            ? 'bg-red-100 text-red-800'
-                            : 'bg-yellow-100 text-yellow-800'
-                        }`}>
-                          {reservation.reservation_type}
-                        </span>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
-                      最近の予約がありません
+                {stats?.recent_reservations?.map((reservation: any) => (
+                  <tr key={reservation.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {reservation.reservation_id}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {reservation.guest_name}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {format(new Date(reservation.check_in_date), 'MM/dd', { locale: ja })}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {format(new Date(reservation.check_out_date), 'MM/dd', { locale: ja })}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {reservation.room_type}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        reservation.reservation_type === '予約'
+                          ? 'bg-green-100 text-green-800'
+                          : reservation.reservation_type === 'キャンセル'
+                          ? 'bg-red-100 text-red-800'
+                          : 'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {reservation.reservation_type}
+                      </span>
                     </td>
                   </tr>
-                )}
+                ))}
               </tbody>
             </table>
           </div>

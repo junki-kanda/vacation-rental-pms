@@ -10,45 +10,23 @@ from ..crud import (
     update_reservation, get_or_create_facility
 )
 
-router = APIRouter(
-    prefix="/api/reservations",
-    tags=["予約管理"],
-    responses={404: {"description": "Not found"}}
-)
+router = APIRouter(prefix="/api/reservations", tags=["reservations"])
 
-@router.get(
-    "",
-    response_model=List[Reservation],
-    summary="予約一覧の取得",
-    description="指定された条件に基づいて予約の一覧を取得します。複数の条件を組み合わせてフィルタリングが可能です。"
-)
+@router.get("", response_model=List[Reservation])
 def list_reservations(
-    skip: int = Query(0, ge=0, description="スキップする件数"),
-    limit: int = Query(100, ge=1, le=1000, description="取得する最大件数"),
-    ota_name: Annotated[Optional[List[str]], Query(description="OTA名でフィルター（複数指定可）")] = None,
-    facility_id: Annotated[Optional[str], Query(description="施設IDでフィルター")] = None,
-    room_type: Annotated[Optional[str], Query(description="部屋タイプでフィルター")] = None,
-    check_in_date_from: Annotated[Optional[str], Query(description="チェックイン日の開始日（YYYY-MM-DD形式）")] = None,
-    check_in_date_to: Annotated[Optional[str], Query(description="チェックイン日の終了日（YYYY-MM-DD形式）")] = None,
-    guest_name: Annotated[Optional[str], Query(description="ゲスト名でフィルター（部分一致）")] = None,
-    sort_by: Annotated[Optional[str], Query(description="ソートキー（check_in_date, created_at等）")] = None,
-    sort_order: Annotated[Optional[str], Query(description="ソート順序（asc: 昇順, desc: 降順）")] = None,
+    skip: int = 0,
+    limit: int = 100,
+    ota_name: Annotated[Optional[List[str]], Query()] = None,
+    facility_id: Annotated[Optional[str], Query()] = None,  # 文字列として受け取る（後方互換性のため残す）
+    room_type: Annotated[Optional[str], Query()] = None,  # 部屋タイプフィルター追加
+    check_in_date_from: Annotated[Optional[str], Query()] = None,  # 文字列として受け取る
+    check_in_date_to: Annotated[Optional[str], Query()] = None,  # 文字列として受け取る
+    guest_name: Annotated[Optional[str], Query()] = None,
+    sort_by: Annotated[Optional[str], Query()] = None,  # ソートキー
+    sort_order: Annotated[Optional[str], Query()] = None,  # ソート順序
     db: Session = Depends(get_db)
 ):
-    """
-    予約一覧を取得
-    
-    ### フィルター条件:
-    - **ota_name**: OTA名でフィルター（複数指定可能）
-    - **facility_id**: 特定の施設の予約のみ取得
-    - **room_type**: 特定の部屋タイプの予約のみ取得
-    - **check_in_date_from/to**: チェックイン日の期間指定
-    - **guest_name**: ゲスト名での部分一致検索
-    
-    ### ソート:
-    - **sort_by**: check_in_date, created_at, guest_name等
-    - **sort_order**: asc（昇順）またはdesc（降順）
-    """
+    """予約一覧を取得"""
     # 空文字列をNoneに変換
     if ota_name and all(name == "" for name in ota_name):
         ota_name = None

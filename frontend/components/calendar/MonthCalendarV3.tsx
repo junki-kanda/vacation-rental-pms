@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, memo } from 'react';
+import { useState, useMemo } from 'react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, startOfWeek, endOfWeek, isSameMonth, isToday, isSameDay, parseISO, differenceInDays } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
@@ -52,7 +52,7 @@ interface ProcessedReservation extends Reservation {
   row: number;
 }
 
-function MonthCalendarV3Component({ 
+export default function MonthCalendarV3({ 
   currentDate, 
   onDateChange, 
   reservations = [],
@@ -61,112 +61,66 @@ function MonthCalendarV3Component({
   showCancelled = false
 }: MonthCalendarProps) {
   const router = useRouter();
-  
-  // カレンダーの日付計算をメモ化
-  const calendarDates = useMemo(() => {
-    const monthStart = startOfMonth(currentDate);
-    const monthEnd = endOfMonth(currentDate);
-    const calendarStart = startOfWeek(monthStart, { locale: ja });
-    const calendarEnd = endOfWeek(monthEnd, { locale: ja });
-    
-    const days = eachDayOfInterval({ start: calendarStart, end: calendarEnd });
-    const weeks = [];
-    for (let i = 0; i < days.length; i += 7) {
-      weeks.push(days.slice(i, i + 7));
-    }
-    
-    return {
-      monthStart,
-      monthEnd,
-      calendarStart,
-      calendarEnd,
-      days,
-      weeks
-    };
-  }, [currentDate]);
+  const monthStart = startOfMonth(currentDate);
+  const monthEnd = endOfMonth(currentDate);
+  const calendarStart = startOfWeek(monthStart, { locale: ja });
+  const calendarEnd = endOfWeek(monthEnd, { locale: ja });
 
-  const { days, weeks } = calendarDates;
+  const days = useMemo(() => {
+    return eachDayOfInterval({ start: calendarStart, end: calendarEnd });
+  }, [calendarStart, calendarEnd]);
+
+  const weeks = useMemo(() => {
+    const weeksArray = [];
+    for (let i = 0; i < days.length; i += 7) {
+      weeksArray.push(days.slice(i, i + 7));
+    }
+    return weeksArray;
+  }, [days]);
 
   const weekDays = ['日', '月', '火', '水', '木', '金', '土'];
 
-  // フィルター済みの予約データ（最適化版）
+  // フィルター済みの予約データ
   const filteredReservations = useMemo(() => {
-    if (!reservations?.length) return [];
+    let filtered = reservations;
     
-    return reservations.filter(res => {
-      // キャンセル済み予約のフィルタリング
-      if (!showCancelled && res.reservation_type === 'キャンセル') {
-        return false;
-      }
-      
-      // 施設フィルタリング
-      if (selectedRoomType) {
+    if (!showCancelled) {
+      filtered = filtered.filter(res => res.reservation_type !== 'キャンセル');
+    }
+    
+    if (selectedRoomType) {
+      filtered = filtered.filter(res => {
+        // 施設名で一致を確認
         return res.room_type === selectedRoomType || 
-               (res.facility?.name === selectedRoomType);
-      }
-      
-      return true;
-    });
+               (res.facility && res.facility.name === selectedRoomType);
+      });
+    }
+    
+    return filtered;
   }, [reservations, showCancelled, selectedRoomType]);
 
-  // 予約データの前処理（日付パース）
-  const preprocessedReservations = useMemo(() => {
-    return filteredReservations.map(res => {
+  // 予約データを処理
+  const processedReservations = useMemo(() => {
+    const facilityGroups = new Map<string, ProcessedReservation[]>();
+    
+    // 施設ごとにグループ化
+    filteredReservations.forEach(res => {
       const checkIn = parseISO(res.start || res.check_in_date || '');
       const checkOut = parseISO(res.end || res.check_out_date || '');
       const guestName = res.guest_name || res.title?.split(' (')[0] || '不明';
-      const facilityName = res.facility?.name || res.room_type;
       
-      return {
+      const processed: ProcessedReservation = {
         ...res,
         guestName,
         checkIn,
         checkOut,
-        facilityName,
-        checkInTime: checkIn.getTime(),
-        checkOutTime: checkOut.getTime()
+        displaySegments: [],
+        row: 0
       };
-    });
-  }, [filteredReservations]);
-
-  // 予約データの施設別グループ化
-  const facilityGroups = useMemo(() => {
-    const groups = new Map<string, typeof preprocessedReservations>();
-    
-    preprocessedReservations.forEach(res => {
-      if (!groups.has(res.facilityName)) {
-        groups.set(res.facilityName, []);
-      }
-      groups.get(res.facilityName)!.push(res);
-    });
-    
-    return groups;
-  }, [preprocessedReservations]);
-
-  // 予約データを処理（最適化版）
-  const processedReservations = useMemo(() => {
-    const result: ProcessedReservation[] = [];
-    
-    facilityGroups.forEach(group => {
-      // グループ内の予約をソート
-      const sortedGroup = group.sort((a, b) => a.checkInTime - b.checkInTime);
       
-      sortedGroup.forEach(res => {
-        const processed: ProcessedReservation = {
-          ...res,
-          displaySegments: [],
-          row: 0
-        };
-      
-        // 各週でのセグメントを計算（最適化版）
-        const weekStartTime = weeks[0][0].getTime();
-        const weekLength = 7 * 24 * 60 * 60 * 1000; // 1週間のミリ秒
-        
-        weeks.forEach((week, weekIndex) => {
-          const weekStart = week[0];
-          const weekEnd = week[6];
-          const weekStartMs = weekStart.getTime();
-          const weekEndMs = weekEnd.getTime();
+      // 各週でのセグメントを計算
+      weeks.forEach((week, weekIndex) => {
+        const weekStart = week[0];
         const weekEnd = week[week.length - 1];
         
         // この週に予約が関係するか確認

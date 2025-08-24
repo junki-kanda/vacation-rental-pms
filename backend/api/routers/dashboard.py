@@ -15,30 +15,11 @@ from ..crud import (
 )
 from ..models import Reservation
 
-router = APIRouter(
-    prefix="/api/dashboard",
-    tags=["ダッシュボード"],
-    responses={404: {"description": "Not found"}}
-)
+router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
-@router.get(
-    "/stats",
-    response_model=DashboardStats,
-    summary="ダッシュボード統計情報の取得",
-    description="本日のチェックイン/アウト、宿泊者数、稼働率などのリアルタイム統計を取得します"
-)
+@router.get("/stats", response_model=DashboardStats)
 def get_dashboard_statistics(db: Session = Depends(get_db)):
-    """
-    ダッシュボードの統計情報を取得
-    
-    ### 取得できる情報:
-    - **today_checkins**: 本日のチェックイン棟数
-    - **today_checkouts**: 本日のチェックアウト棟数
-    - **total_guests_today**: 本日の宿泊者数合計
-    - **occupancy_rate**: 現在の稼働率（%）
-    - **recent_reservations**: 最近の予約（10件）
-    - **sync_status**: 最新の同期状態
-    """
+    """ダッシュボードの統計情報を取得"""
     return get_dashboard_stats(db)
 
 @router.get("/calendar/reservations")

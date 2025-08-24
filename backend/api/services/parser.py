@@ -24,10 +24,10 @@ class NeppanCSVParser:
         "Agoda": "agoda"
     }
     
-    # 必須カラム（宿泊者氏名など）
+    # 必須カラム
     REQUIRED_COLUMNS = [
         "予約ID", "予約区分", "チェックイン日", "チェックアウト日",
-        "予約サイト名称", "部屋タイプ名称", "宿泊者氏名"
+        "予約サイト名称", "部屋タイプ名称", "宿泊者名"
     ]
     
     def __init__(self, file_path: str, encoding: str = "shift_jis"):
@@ -197,9 +197,8 @@ class NeppanCSVParser:
     def _convert_numbers(self):
         """数値カラムの変換"""
         number_columns = {
-            "大人人数計": "num_adults",
-            "子供人数計": "num_children",
-            "幼児人数計": "num_infants",
+            "大人数": "num_adults",
+            "子供数": "num_children",
             "合計金額": "total_amount",
             "手数料": "commission",
             "純売上": "net_amount"
@@ -228,7 +227,7 @@ class NeppanCSVParser:
             "予約番号": "reservation_number",
             "予約サイト名称": "ota_name",
             "部屋タイプ名称": "room_type",
-            "宿泊者氏名": "guest_name",
+            "宿泊者名": "guest_name",
             "宿泊者名カナ": "guest_name_kana",
             "電話番号": "guest_phone",
             "メールアドレス": "guest_email"
@@ -243,7 +242,7 @@ class NeppanCSVParser:
             "ota_name", "ota_type", "facility_name", "room_type",
             "check_in_date", "check_out_date", "reservation_date",
             "guest_name", "guest_name_kana", "guest_phone", "guest_email",
-            "num_adults", "num_children", "num_infants",
+            "num_adults", "num_children",
             "total_amount", "commission", "net_amount",
             "questions_answers", "change_history", "notes_other"
         ]

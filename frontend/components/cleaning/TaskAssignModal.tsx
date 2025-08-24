@@ -7,7 +7,6 @@ import staffGroupsApi, { StaffGroup } from '@/lib/api/staff-groups';
 import cleaningApi from '@/lib/api/cleaning';
 import { X, Users, DollarSign, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
-import TaskRevisionModal from './TaskRevisionModal';
 
 interface TaskAssignModalProps {
   task: CleaningTask;
@@ -20,7 +19,6 @@ export default function TaskAssignModal({ task, onClose }: TaskAssignModalProps)
   const [startTime, setStartTime] = useState(task.scheduled_start_time || '11:00');
   const [endTime, setEndTime] = useState(task.scheduled_end_time || '16:00');
   const [notes, setNotes] = useState('');
-  const [showRevisionModal, setShowRevisionModal] = useState(false);
 
   // グループ一覧取得
   const { data: groupList, isLoading } = useQuery({
@@ -83,12 +81,9 @@ export default function TaskAssignModal({ task, onClose }: TaskAssignModalProps)
   };
 
   const handleMarkNeedsRevision = () => {
-    setShowRevisionModal(true);
-  };
-
-  const handleRevisionModalClose = () => {
-    setShowRevisionModal(false);
-    onClose(); // 親モーダルも閉じる
+    if (confirm('このタスクを「要修正」に変更しますか？')) {
+      updateStatusMutation.mutate('needs_revision');
+    }
   };
 
   const selectedGroup = groupList?.find(g => g.id === selectedGroupId);
@@ -294,15 +289,6 @@ export default function TaskAssignModal({ task, onClose }: TaskAssignModalProps)
           </div>
         </div>
       </div>
-
-      {/* 修正要求モーダル */}
-      {showRevisionModal && (
-        <TaskRevisionModal
-          task={task}
-          mode="request"
-          onClose={handleRevisionModalClose}
-        />
-      )}
     </div>
   );
 }
